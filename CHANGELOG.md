@@ -8,6 +8,19 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.0 — 自维护分支整合
+
+- 保留 Yoahoug 0.0.26 的功能及原提交历史，整合上游 #31、#33、#38、#30、#35、#18、#17。
+- 统一 Auto/default 与模型启用状态，修复 Request 覆盖参数丢失和 Agent turn 补丁误判。
+- 完善 glass 预检和失败退出码；类型、Lint、单测与版本一致性统一由 `scripts/verify.mjs` 验证。
+- 更新渠道改为 zhanglinrun/CCursor，锁定 pnpm，并同步发版时的 installer lockfile 版本。
+- 对 Windows Cursor 3.27.12 完成只读补丁预检；真实供应商及 SSH Agent 端到端验收仍需实际使用验证。
+- 本版本为本地源码整合与构建，尚未公开发布。完整来源与限制见 `docs/INTEGRATION.md`。
+
+以下 0.0.26 及更早条目保留自 Yoahoug 增强分支。
+
+---
+
 ## 0.0.26 — 面板内手动检查更新，并修复 Windows 上装不上
 
 ### 新增：面板里的 Check for Updates 按钮

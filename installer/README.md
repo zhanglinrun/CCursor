@@ -1,29 +1,15 @@
-# @cometix/ccursor
+# CCursor maintained installer
 
-Cursor++ BYOK Installer — Bring Your Own Key for Cursor IDE.
+Build from the repository root:
 
-## Install
-
-```bash
-npx @cometix/ccursor install
+```sh
+npm --prefix installer ci
+npm --prefix installer run build:all
+node installer/dist/cli.cjs check
 ```
 
-## Uninstall
+Install extension dependencies in `Cursor++` first. Stop if preflight fails. Fully close Cursor before running `install`, `update` or `uninstall` with this CLI.
 
-```bash
-npx @cometix/ccursor uninstall
-```
+Keep `dist/`, `vsix/` and the installed dependencies together. Panel/VSIX-only updates do not update Cursor application patches. The upstream npm package installs the upstream version, not this fork.
 
-## Status
-
-```bash
-npx @cometix/ccursor status
-```
-
-## Notes
-
-- **After every Cursor update, re-run `install`** — updates overwrite the patched bundles.
-- **Cursor 3.23+ (especially Remote-SSH):** if agents fail with
-  `AI Model Not Found / Model name is not valid: "<id>"`, re-run `install` and restart Cursor.
-  The installer forces Cursor's `cursor_agent_host` topology back to the `legacy`
-  implementation, which restores Cursor++'s interception of agent requests.
+Remote SSH uses the legacy Agent Host fallback from PR #33. Read [the maintenance record](../docs/INTEGRATION.md) for compatibility limits and the startup transport setting that requires manual restoration.
