@@ -401,3 +401,7 @@ Full feature list, architecture notes and general troubleshooting live upstream:
 AGPL-3.0-or-later, inherited from upstream — see [LICENSE](./LICENSE).
 
 As required by the AGPL, this fork is released under the same license.
+
+## Remote SSH compatibility patch
+
+Includes upstream PR #33: the installer forces the Cursor Agent Host gate off to restore the legacy BYOK interception path. Agent Host-specific features may be unavailable; verify your exact Cursor version. Re-run this branch's installer after each Cursor update.

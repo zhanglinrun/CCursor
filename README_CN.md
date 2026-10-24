@@ -380,3 +380,7 @@ VSIX 都能发给其他平台的用户。
 AGPL-3.0-or-later，承自上游 —— 见 [LICENSE](./LICENSE)。
 
 按 AGPL 要求，本二改版以同一许可证发布。
+
+## Remote SSH 兼容补丁
+
+已整合上游 PR #33：Cursor 3.23+ 的 Agent Host 可回退到 legacy 实现，以恢复本机 BYOK 拦截。该回退可能影响 Agent Host 专属功能，必须按实际 Cursor 版本验证。每次更新 Cursor 后需重新运行本分支的 installer。
