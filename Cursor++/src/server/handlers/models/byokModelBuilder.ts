@@ -16,7 +16,7 @@ import type {
 } from '../../gen/aiserver_v1_pb'
 import { create } from '@bufbuild/protobuf'
 import { flattenModels } from '../../config/providersStore'
-import { effectiveProviderType } from '../../data/defaults'
+import { effectiveProviderType, isModelDefaultOn } from '../../data/defaults'
 import { RequestedModel_ModelParameterValueSchema } from '../../gen/agent_v1_pb'
 import {
   AvailableModelsResponse_AvailableModelSchema,
@@ -405,7 +405,7 @@ function buildAvailableModelFromByok(
         displayName,
         displayNameOutsidePicker: displayName,
         isDefaultMaxConfig: isDefault,
-        isDefaultNonMaxConfig: isDefault && (model.defaultOn ?? false),
+        isDefaultNonMaxConfig: isDefault && isModelDefaultOn(model),
         variantStringRepresentation: comboToStringRepr(model.id, combo),
         parameterValues: comboToParamValues(combo),
         tooltipData,
@@ -420,7 +420,7 @@ function buildAvailableModelFromByok(
         displayName,
         displayNameOutsidePicker: displayName,
         isDefaultMaxConfig: true,
-        isDefaultNonMaxConfig: model.defaultOn ?? false,
+        isDefaultNonMaxConfig: isModelDefaultOn(model),
         variantStringRepresentation: buildLegacyStringRepr(model),
         parameterValues: buildLegacyParamValues(model),
         tooltipData,
@@ -430,7 +430,7 @@ function buildAvailableModelFromByok(
 
   return create(AvailableModelsResponse_AvailableModelSchema, {
     name: model.id,
-    defaultOn: model.defaultOn ?? false,
+    defaultOn: isModelDefaultOn(model),
     isUserAdded: false,
     supportsAgent: model.supportsAgent ?? true,
     supportsThinking: model.thinking,

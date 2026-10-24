@@ -12,9 +12,10 @@
  *
  * 因此这里把占位名统一映射到 providers.json 中的默认模型 —— 与
  * AiService.getDefaultModel 推送给 Composer / Cmd+K 的默认模型保持同一套选择规则
- * (defaultOn !== false 的第一个模型, 都不符合时退到列表首项)。
+ * (只选择 defaultOn === true 的模型, 没有启用模型时拒绝自动路由)。
  */
 import { flattenModels } from '../../config/providersStore'
+import { isModelDefaultOn } from '../../data/defaults'
 
 const DEFAULT_MODEL_ALIASES: ReadonlySet<string> = new Set(['', 'default', 'auto'])
 
@@ -25,11 +26,11 @@ export function isDefaultModelAlias(modelId: string | undefined | null): boolean
   return DEFAULT_MODEL_ALIASES.has(modelId.trim().toLowerCase())
 }
 
-/** providers.json 里当前生效的默认模型 id; 一个模型都没有时返回 null */
+/** providers.json 里当前生效的默认模型 id; 没有启用模型时返回 null */
 export function resolveDefaultModelId(): string | null {
   const all = flattenModels()
-  const preferred = all.find(entry => entry.model.defaultOn !== false)
-  return (preferred ?? all[0])?.model.id ?? null
+  const preferred = all.find(entry => isModelDefaultOn(entry.model))
+  return preferred?.model.id ?? null
 }
 
 /**
@@ -37,7 +38,7 @@ export function resolveDefaultModelId(): string | null {
  *
  * 占位名 → 默认模型 id; 已有具体 id → 原样返回 (不做任何前缀推断)。
  * 占位名且没有任何可用模型时返回原始占位名, 让上游照常报 ModelNotFoundError,
- * 用户能看到 "providers.json 为空" 的真实原因。
+ * 用户能看到没有可用默认模型的错误。
  */
 export function resolveRequestedModelId(modelId: string | undefined | null): string {
   if (!isDefaultModelAlias(modelId))

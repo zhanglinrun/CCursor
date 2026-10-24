@@ -76,6 +76,22 @@ describe('default model alias', () => {
     expect(resolveRequestedModelId('default')).toBe('configured-default-model')
   })
 
+  it('does not treat a missing defaultOn flag as enabled for Auto', () => {
+    const config = structuredClone(ALIAS_PROVIDERS)
+    delete config.providers[0].models[0].defaultOn
+    setProvidersForTests(config)
+    expect(resolveDefaultModelId()).toBe('configured-default-model')
+  })
+
+  it('does not route Auto to disabled models when none are enabled', () => {
+    const config = structuredClone(ALIAS_PROVIDERS)
+    for (const model of config.providers[0].models)
+      model.defaultOn = false
+    setProvidersForTests(config)
+    expect(resolveDefaultModelId()).toBeNull()
+    expect(() => resolveModel('auto')).toThrow(ModelNotFoundError)
+  })
+
   it('keeps concrete model ids untouched', () => {
     setProvidersForTests(ALIAS_PROVIDERS)
     expect(resolveRequestedModelId('non-default-model')).toBe('non-default-model')
