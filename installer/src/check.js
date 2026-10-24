@@ -8,6 +8,7 @@ import { checkAgentHostPatch } from './patch-agent-host.js';
 import { checkProxy39Patch, needsProxy39Patch } from './patch-proxy-39.js';
 import { checkAgentHostGatePatch } from './patch-agent-host-gate.js';
 import { isInjectPatched } from './patch-inject.js';
+import { isGlassRefreshPatched, patchGlassModelRefresh } from './patch-glass-refresh.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -19,6 +20,7 @@ export async function check() {
     console.log(fail('Cursor installation not found'));
     console.log();
     console.log(formatDiagnostic(diagnostic));
+    process.exitCode = 1;
     return;
   }
 
@@ -34,6 +36,17 @@ export async function check() {
       continue;
     }
     const wb = readFileSync(file, 'utf-8');
+    if (label === 'glass') {
+      try {
+        if (isInjectPatched(wb) && !isGlassRefreshPatched(wb))
+          throw new Error('existing renderer hook lacks the model refresh patch; run update');
+        patchGlassModelRefresh(wb);
+        console.log(ok('Glass model refresh: matchable or already patched'));
+      } catch (error) {
+        console.log(fail(`Glass model refresh: ${error.message}`));
+        allOk = false;
+      }
+    }
     // 与 patch-inject.js 的 ANCHORS 保持一致 —— 兼容不同版本及打包环境下
     // 包含/不包含 .js 后缀或带路径前缀的 ConnectRPC 客户端模块键。
     if (isInjectPatched(wb)) {
@@ -111,5 +124,6 @@ export async function check() {
     console.log(ok('All patch targets matchable'));
   } else {
     console.log(fail('Some targets not matchable — install may fail'));
+    process.exitCode = 1;
   }
 }
