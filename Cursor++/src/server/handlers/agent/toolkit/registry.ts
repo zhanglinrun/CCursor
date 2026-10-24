@@ -7,6 +7,7 @@ import { ApplyPatchTool } from './definitions/ApplyPatch'
 import { AskQuestionTool } from './definitions/AskQuestion'
 import { AwaitTool } from './definitions/Await'
 import { CallMcpToolTool } from './definitions/CallMcpTool'
+import { CreateGoalTool } from './definitions/CreateGoal'
 import { CreatePlanTool } from './definitions/CreatePlan'
 import { DeleteTool } from './definitions/Delete'
 import { EditTool } from './definitions/Edit'
@@ -25,6 +26,7 @@ import { SwitchModeTool } from './definitions/SwitchMode'
 import { TaskTool } from './definitions/Task'
 import { TodoWriteTool } from './definitions/TodoWrite'
 import { UpdateCurrentStepTool } from './definitions/UpdateCurrentStep'
+import { UpdateGoalTool } from './definitions/UpdateGoal'
 import { WebFetchTool } from './definitions/WebFetch'
 import { WebSearchTool } from './definitions/WebSearch'
 import { WriteTool } from './definitions/Write'
@@ -59,6 +61,8 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
   CallMcpToolTool,
   GetDynamicToolsTool,
   CreatePlanTool,
+  CreateGoalTool,
+  UpdateGoalTool,
   // SemanticSearchTool,
 ]
 

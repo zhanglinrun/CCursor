@@ -18,7 +18,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as vscode from 'vscode'
-import { version as CURRENT_VERSION } from '../package.json'
+import { compareVersions, EXTENSION_VERSION } from './version'
 
 /** 本二改版的发布通道 */
 const RELEASE_REPO = 'Yoahoug/CCursor-BYOK'
@@ -54,26 +54,12 @@ export interface ManualUpdateHooks {
 }
 
 function getCurrentVersion(): string {
-  return CURRENT_VERSION
+  return EXTENSION_VERSION
 }
 
-/** Release tag 允许写成 v0.0.17，比较前统一去前缀 */
+/** Normalize release tag prefixes before comparing versions. */
 function normalizeVersion(value: string): string {
   return value.replace(/^v/, '')
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = normalizeVersion(a).split('.').map(Number)
-  const pb = normalizeVersion(b).split('.').map(Number)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const va = pa[i] ?? 0
-    const vb = pb[i] ?? 0
-    if (Number.isNaN(va) || Number.isNaN(vb))
-      return 0
-    if (va !== vb)
-      return va - vb
-  }
-  return 0
 }
 
 async function fetchLatestRelease(): Promise<LatestRelease | null> {
