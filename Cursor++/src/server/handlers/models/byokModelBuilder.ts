@@ -8,27 +8,27 @@
  *   - 有 parameters 配置时生成 parameterDefinitions + 笛卡尔积 variants (Edit 面板)
  *   - 无 parameters 时单 variant (向后兼容,无 Edit 按钮)
  */
-import type { ProviderEntry, ProviderModel, ProviderType, ThinkingLevel } from '../../data/defaults'
+import type { ProviderEntry, ProviderModel, ProviderType } from '../../data/defaults'
 import type { RequestedModel_ModelParameterValue } from '../../gen/agent_v1_pb'
 import type {
   AvailableModelsResponse_AvailableModel,
   ModelParameterDefinition,
-  ModelParameterDefinition_ModelParameterType,
 } from '../../gen/aiserver_v1_pb'
 import { create } from '@bufbuild/protobuf'
 import { flattenModels } from '../../config/providersStore'
+import { effectiveProviderType } from '../../data/defaults'
 import { RequestedModel_ModelParameterValueSchema } from '../../gen/agent_v1_pb'
 import {
   AvailableModelsResponse_AvailableModelSchema,
   AvailableModelsResponse_DegradationStatus,
   AvailableModelsResponse_ModelVariantConfigSchema,
   AvailableModelsResponse_TooltipDataSchema,
-  ModelParameterDefinitionSchema,
-  ModelParameterDefinition_BooleanParameterDefinitionSchema,
   ModelParameterDefinition_BooleanParameterDefinition_BooleanParameterValueSchema,
-  ModelParameterDefinition_EnumParameterDefinitionSchema,
+  ModelParameterDefinition_BooleanParameterDefinitionSchema,
   ModelParameterDefinition_EnumParameterDefinition_EnumParameterValueSchema,
+  ModelParameterDefinition_EnumParameterDefinitionSchema,
   ModelParameterDefinition_ModelParameterTypeSchema,
+  ModelParameterDefinitionSchema,
 } from '../../gen/aiserver_v1_pb'
 
 const VARIANT_SUFFIX_STYLE = 'color: var(--cursor-text-tertiary); font-size: 0.85em;'
@@ -107,7 +107,7 @@ function makeBoolParamDef(id: string, name: string, tooltip?: string): ModelPara
   })
 }
 
-type ParamAxis = { id: string, values: string[] }
+interface ParamAxis { id: string, values: string[] }
 
 function buildParameterDefinitions(
   provider: ProviderEntry,
@@ -119,7 +119,9 @@ function buildParameterDefinitions(
 
   const defs: ModelParameterDefinition[] = []
   const axes: ParamAxis[] = []
-  const isOpenAI = provider.type === 'openai-chat' || provider.type === 'openai-responses'
+  // 参数轴按**模型生效协议**生成，不是 provider.type —— 见 effectiveProviderType。
+  const modelType = effectiveProviderType(provider, model)
+  const isOpenAI = modelType === 'openai-chat' || modelType === 'openai-responses'
 
   // ── Reasoning / Thinking+Effort / Budget ──
   if (params.reasoning && isOpenAI) {
@@ -256,7 +258,7 @@ function buildVariantSuffix(combo: VariantCombo, providerType: ProviderType, con
   return segments.length > 0 ? segments.join(' ') : null
 }
 
-function isDefaultCombo(combo: VariantCombo, model: ProviderModel, providerType: ProviderType): boolean {
+function isDefaultCombo(combo: VariantCombo, model: ProviderModel, _providerType: ProviderType): boolean {
   for (const [id, val] of combo.params) {
     switch (id) {
       case 'reasoning':
@@ -264,8 +266,9 @@ function isDefaultCombo(combo: VariantCombo, model: ProviderModel, providerType:
           if (val !== model.thinkingLevel)
             return false
         }
-        else if (val !== 'none')
+        else if (val !== 'none') {
           return false
+        }
         break
       case 'thinking':
         if (val !== String(!!model.thinking))
@@ -318,10 +321,12 @@ function buildLegacySuffix(model: ProviderModel): string | null {
       const label = LEVEL_LABELS[model.thinkingLevel.toLowerCase()] ?? model.thinkingLevel
       segments.push(`:icon-brain: ${label}`)
     }
-    else if (model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0)
+    else if (model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0) {
       segments.push(`:icon-brain: ${formatBudgetLabel(model.thinkingBudgetTokens)}`)
-    else
+    }
+    else {
       segments.push(':icon-brain:')
+    }
   }
   if (model.fastMode)
     segments.push('Fast')
@@ -387,14 +392,15 @@ function buildAvailableModelFromByok(
 
   // ── parameterDefinitions + variants ──
   const { defs, axes } = buildParameterDefinitions(provider, model)
+  const variantModelType = effectiveProviderType(provider, model)
   let variants
 
   if (defs.length > 0 && axes.length > 0) {
     const combos = cartesianProduct(axes)
     variants = combos.map((combo) => {
-      const suffix = buildVariantSuffix(combo, provider.type, model.contextTokenLimit)
+      const suffix = buildVariantSuffix(combo, variantModelType, model.contextTokenLimit)
       const displayName = wrapDisplayName(model.displayName, suffix)
-      const isDefault = isDefaultCombo(combo, model, provider.type)
+      const isDefault = isDefaultCombo(combo, model, variantModelType)
       return create(AvailableModelsResponse_ModelVariantConfigSchema, {
         displayName,
         displayNameOutsidePicker: displayName,

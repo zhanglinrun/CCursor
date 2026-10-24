@@ -7,14 +7,18 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionToolMessageParam,
 } from 'openai/resources/chat/completions'
-import type { Provider } from '../../runtime-config'
+import type { ResponseInput, ResponseInputItem } from 'openai/resources/responses/responses'
+import type { ProviderType } from '../../data/defaults'
 import type { SemanticTurn } from './semanticConversation'
 import type { StoredMessage } from './storedTranscript'
 import type { LLMContentBlock, LLMMessage, LLMTool } from './types'
+
+// ── Responses API 编码 ──
+
 import { normalizeStoredTranscript as normalizeSemanticTranscript } from './semanticConversation'
 
 export interface ProviderConversationCodec {
-  readonly provider: Provider
+  readonly provider: ProviderType
   readonly name: string
   normalizeMessages: (messages: LLMMessage[]) => LLMMessage[]
   normalizeStoredTranscript: (messages: StoredMessage[]) => SemanticTurn[]
@@ -23,7 +27,7 @@ export interface ProviderConversationCodec {
 
 abstract class BaseConversationCodec implements ProviderConversationCodec {
   constructor(
-    readonly provider: Provider,
+    readonly provider: ProviderType,
     readonly name: string,
   ) {}
 
@@ -464,7 +468,8 @@ export function encodeGeminiRequestMessages(messages: LLMMessage[]): {
     const prevIsAllFuncResp = prev?.role === 'user' && prevParts.length > 0 && prevParts.every(p => 'functionResponse' in p)
     if (isAllFuncResp && prevIsAllFuncResp && prev) {
       prev.parts = [...prevParts, ...cParts]
-    } else {
+    }
+    else {
       contents.push(c)
     }
   }
@@ -607,10 +612,6 @@ export const anthropicConversationCodec: ProviderConversationCodec = new Anthrop
 export const openAIChatConversationCodec: ProviderConversationCodec = new OpenAIChatConversationCodec()
 export const openAIResponsesConversationCodec: ProviderConversationCodec = new OpenAIResponsesConversationCodec()
 export const geminiConversationCodec: ProviderConversationCodec = new GeminiConversationCodec()
-
-// ── Responses API 编码 ──
-
-import type { ResponseInput, ResponseInputItem } from 'openai/resources/responses/responses'
 
 export interface ResponsesEncodedInput {
   instructions: string | undefined

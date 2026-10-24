@@ -18,6 +18,14 @@ export function ModelsSection() {
         >
         </span>
         <span class="models-header-actions">
+          <button
+            class="tiny secondary"
+            {...{ 'x-bind:disabled': '$store.app.batchTesting[p.id] === true' }}
+            x-bind:title="'Test every model under this provider, one at a time so the speed numbers stay comparable'"
+            x-on:click="$store.app.testAllModels(p.id)"
+            x-text="$store.app.batchTesting[p.id] ? 'Testing…' : '⚡ Test All'"
+          >
+          </button>
           <button class="tiny secondary" {...{ 'x-on:click': '$store.app.fetchRemoteModels(p.id)' }}>↓ Fetch</button>
           <button class="tiny secondary" {...{ 'x-on:click': '$store.app.addModel(p.id)' }}>+ Add Model</button>
         </span>
@@ -36,13 +44,20 @@ export function ModelsSection() {
           </div>
           <div class="remote-models-list">
             <template {...{ 'x-for': 'rm in $store.app.remoteModels[p.id].models' }}>
+              {/*
+                显示上游给的 display_name，而不是 id。
+                部分中转站会把 id 混淆成不可读的串（flash → hsalf 之类），
+                拿 id 当标题会让整列都是乱码；id 只在两者不同时作为副标题出现。
+              */}
               <div
                 class="remote-model-item"
-                {...{
-                  'x-on:click': '$store.app.applyRemoteModel(p.id, rm.id)',
-                  'x-text': 'rm.id',
-                }}
+                x-on:click="$store.app.applyRemoteModel(p.id, rm)"
+                x-bind:title="rm.id"
               >
+                <span class="remote-model-name" x-text="$store.app.remoteModelPrimary(rm)"></span>
+                <template {...{ 'x-if': '$store.app.remoteModelSecondary(rm)' }}>
+                  <span class="remote-model-id" x-text="$store.app.remoteModelSecondary(rm)"></span>
+                </template>
               </div>
             </template>
           </div>
@@ -55,11 +70,11 @@ export function ModelsSection() {
           {' '}
           <b>+ Add Model</b>
           {' '}
-          or
+          to add one by hand, or
           {' '}
           <b>↓ Fetch</b>
           {' '}
-          to get started.
+          to read the available list from the endpoint.
         </div>
       </template>
       <template {...{ 'x-for': 'm in ($store.app.getDraft(p.id).models || [])', 'x-bind:key': 'm.id' }}>

@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# 依赖
+node_modules/
+
+# 构建产物
+Cursor++/dist/
+Cursor++/*.vsix
+Cursor++/dev/.cache/
+installer/dist/
+installer/vsix/
+
+# 日志
+*.log
+
+# 编辑器
+.idea/
+*.swp
+*.swo
+
+# 环境变量 / 密钥
+.env
+.env.*
+!.env.example
+
+# Project-local caches and temporary verification output
+/Temp/

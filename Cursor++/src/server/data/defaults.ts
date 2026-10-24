@@ -134,6 +134,33 @@ export function buildRedirectForMode(mode: ByokMode): string[] {
 
 export type ProviderType = 'anthropic' | 'openai-chat' | 'openai-responses' | 'gemini'
 
+/**
+ * ProviderType 的完整取值表。
+ *
+ * 刻意用 Record<ProviderType, true> 而不是普通数组：新增 provider 时**漏改这里会
+ * 直接编译报错**（Record 要求覆盖全部键），而数组不会 —— 避免出现"类型里加了、
+ * 运行时校验却不认识"的错配。下面的 PROVIDER_TYPES 与 isProviderType 均从此表派生。
+ */
+const PROVIDER_TYPE_FLAGS: Record<ProviderType, true> = {
+  'anthropic': true,
+  'openai-chat': true,
+  'openai-responses': true,
+  'gemini': true,
+}
+
+/** ProviderType 的全部取值 — 供穷举与展示使用 */
+export const PROVIDER_TYPES = Object.keys(PROVIDER_TYPE_FLAGS) as ProviderType[]
+
+/**
+ * 校验外部输入（providers.json 里的 provider.type）是否为合法 provider 类型。
+ *
+ * type 决定后续用哪套工具定义与提示词，是无法容错的字段，所以必须在配置边界
+ * 就拦下，不能让非法值流进内存缓存。用法见 providersStore 的 withFallback。
+ */
+export function isProviderType(value: unknown): value is ProviderType {
+  return typeof value === 'string' && Object.hasOwn(PROVIDER_TYPE_FLAGS, value)
+}
+
 export interface ProviderAuth {
   kind: 'apiKey' | 'token'
   value: string
@@ -151,6 +178,20 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'm
 export interface ProviderModel {
   id: string
   apiModel: string
+  /**
+   * 该模型使用的协议 —— **只有模型层有协议，中转站层没有**。
+   *
+   * 为什么协议必须落在模型上：一个中转站（一个 Base URL、一个 Key）几乎总会
+   * 同时挂多家的模型 —— gemini、gpt、deepseek、glm 各自走不同的接口形态，
+   * 而分流是中转站内部做的。用户既无法判断"这个中转站属于哪一类协议"，
+   * 也不该为同一个地址建好几条 provider 记录、把密钥重复填。
+   *
+   * 该值由 UI 在把草稿交给服务端之前固化：没手动选过就按模型名推导（见
+   * shared/providerProtocol.ts 的 materializeModelProtocols）。**手写的
+   * providers.json 里可能为空** —— 此时回落到 provider.type，见
+   * effectiveProviderType。
+   */
+  type?: ProviderType
   displayName: string
   thinking: boolean
   /** 统一思考档位 — 优先用于 OpenAI/Gemini/Anthropic 4.5-opus+/4.6+ */
@@ -183,7 +224,7 @@ export interface ProviderModel {
   /**
    * Edit 面板参数选项 — 不填则无 Edit 按钮（完全向后兼容）。
    *
-   * 按 provider.type 自动选择生成模式:
+   * 按模型的生效协议自动选择生成模式:
    *   - anthropic / gemini: thinking (bool toggle) + effort (enum)
    *   - openai-*:           reasoning (enum, None=关闭)
    *
@@ -218,6 +259,18 @@ export interface ProviderModel {
 export interface ProviderEntry {
   id: string
   name: string
+  /**
+   * 中转站的缺省协议 —— 界面已不再暴露这个字段。
+   *
+   * 历史：协议曾经是"一个中转站一种"，后来发现一个中转站（一个地址、一个 Key）
+   * 几乎总会同时挂 gemini / gpt / deepseek / glm，各家走各的接口形态，于是
+   * 协议挪到了模型上（见 ProviderModel.type），选择权也一并挪走。
+   *
+   * 它现在的职责只剩一个：**模型没有 type 时的回落值**（见 effectiveProviderType）。
+   * 经 UI 保存过的配置里每个模型都会带上 type，这个字段就再也轮不到；
+   * 但手写的 providers.json 里它仍是用户唯一的表态方式，所以保留 —— 删掉类型
+   * 定义会让那些文件解析报错，删掉回落分支会让它们解析不出协议。
+   */
   type: ProviderType
   baseUrl: string
   auth: ProviderAuth
@@ -266,6 +319,28 @@ export const DEFAULT_PROVIDERS: ProvidersConfig = {
   providers: [],
 }
 
+/**
+ * 求某个模型实际生效的协议：模型级 type 优先，否则回落到中转站的缺省值。
+ *
+ * 整个请求链路上"用哪套协议"只认这一个函数的结果 —— resolveModel 把它的返回值
+ * 填进 ResolvedModel.provider，下游的 conversationCodec / stateStrategy /
+ * provider 实例全部从那里派生。
+ *
+ * 这里**刻意不做"按模型名猜协议"的推导**：推导规则只有一条，在
+ * shared/providerProtocol.ts 的 defaultProtocolForModel，由 UI 在把草稿交给
+ * 服务端之前（存盘、测试）固化进 model.type。放在这里现算会让服务端和界面各自
+ * 用一套规则推导，两边悄悄分叉；而且对手写的 providers.json 来说，用户显式写下
+ * 的 provider.type 比模型名更可信。
+ *
+ * 因此新增协议相关逻辑时不要在别处重新读 provider.type，否则模型级的值会在
+ * 那条分支上被静默绕过，症状是"改了模型的协议，但工具定义还是旧的那套"。
+ */
+export function effectiveProviderType(provider: ProviderEntry, model?: ProviderModel | null): ProviderType {
+  if (model && isProviderType(model.type))
+    return model.type
+  return provider.type
+}
+
 export const MODELS_CATALOG_FILE_NAME = 'models-catalog.json'
 export const WEB_TOOLS_FILE_NAME = 'web-tools.json'
 export const MANAGED_SKILLS_FILE_NAME = 'managed-skills.json'
@@ -279,14 +354,25 @@ export interface SearchProviderEntry {
   type: SearchProviderType
   enabled: boolean
   apiKey?: string
+  /**
+   * API 地址覆盖 — 用于自建中转/代理网关。
+   * 留空则使用各 provider 的官方地址。当前支持 tavily / firecrawl。
+   */
+  baseUrl?: string
 }
 
-export type FetchProviderType = 'builtin' | 'jina' | 'firecrawl'
+export type FetchProviderType = 'builtin' | 'tavily'
 
+/**
+ * 抓取服务商配置。
+ *
+ * Tavily 抓取**不在这里单独存 key / baseUrl**，而是复用 Search 标签页里
+ * Tavily 那一项的 apiKey 与 baseUrl。理由：两者是同一个 Tavily 账号，
+ * 分开配置会出现"搜索配好了、抓取还得再填一遍"的割裂，也容易填成两个不同的 key。
+ * 所以这里只留一个 provider 选择位。
+ */
 export interface FetchProviderConfig {
   provider: FetchProviderType
-  jina?: { apiKey: string }
-  firecrawl?: { apiKey: string, baseUrl?: string }
 }
 
 export interface WebToolsConfig {
@@ -295,6 +381,15 @@ export interface WebToolsConfig {
     providers: SearchProviderEntry[]
     parallel: boolean
     maxResults: number
+    /**
+     * 全部启用的 provider 都失败时,是否回落到 DuckDuckGo 抓取。
+     *
+     * 默认 true(保留兜底能力)。注意: DDG 会对抓取返回 202 反爬挑战页,
+     * 页面上只有 "About DuckDuckGo / lite / here" 这类导航链接。
+     * searchDuckDuckGo 已加入挑战页识别,遇到拦截会抛出明确错误,
+     * 不会再把导航链接当成搜索结果返回给模型。
+     */
+    fallbackToDuckDuckGo?: boolean
   }
   fetch: FetchProviderConfig
 }
@@ -303,17 +398,31 @@ export const DEFAULT_WEB_TOOLS: WebToolsConfig = {
   $schemaVersion: 1,
   search: {
     providers: [
-      { id: 'default-ddg', type: 'duckduckgo', enabled: true },
-      { id: 'default-exa', type: 'exa', enabled: false },
       { id: 'default-tavily', type: 'tavily', enabled: false },
-      { id: 'default-brave', type: 'brave', enabled: false },
-      { id: 'default-jina', type: 'jina', enabled: false },
-      { id: 'default-firecrawl', type: 'firecrawl', enabled: false },
+      { id: 'default-ddg', type: 'duckduckgo', enabled: false },
     ],
     parallel: false,
     maxResults: 10,
+    fallbackToDuckDuckGo: true,
   },
   fetch: {
-    provider: 'builtin',
+    // Tavily 抓取对 Cloudflare 挑战页(linux.do 这类)有效，内置抓取会被 403 拦掉，
+    // 所以默认选它；没配 key 时 web.ts 会自动回退到内置抓取。
+    provider: 'tavily',
   },
+}
+
+/** 已被移除的 Fetch provider — 读到旧配置时按默认值处理 */
+export const REMOVED_FETCH_PROVIDERS: readonly string[] = ['jina', 'firecrawl']
+
+/**
+ * 归一化磁盘上读到的 fetch provider。
+ *
+ * 老版本 web-tools.json 里可能存着已下线的 'jina' / 'firecrawl'，
+ * 直接当默认值处理，避免 UI 单选按钮全不选中、抓取落到 default 分支。
+ */
+export function normalizeFetchProvider(value: unknown): FetchProviderType {
+  if (value === 'builtin' || value === 'tavily')
+    return value
+  return DEFAULT_WEB_TOOLS.fetch.provider
 }

@@ -7,16 +7,16 @@
  *   3. 修复 assistant(tool_use...) ↔ tool_result 的配对/顺序
  *   4. 跨 provider thinking 降级
  */
-import type { ProviderType as DefaultsProviderType } from '../../data/defaults'
+import type { ProviderType } from '../../data/defaults'
+import type { LLMContentBlock, LLMMessage } from './types'
 import { findToolByAlias, listBuiltinLlmTools } from '../agent/toolkit/registry'
 import { getProviderToolCatalog } from './toolCatalog'
-import type { LLMContentBlock, LLMMessage } from './types'
 
 // ── shortHash: 确定性短哈希 (对标 Pi utils/hash.ts) ──
 
 export function shortHash(str: string): string {
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
+  let h1 = 0xDEADBEEF
+  let h2 = 0x41C6CE57
   for (let i = 0; i < str.length; i++) {
     const ch = str.charCodeAt(i)
     h1 = Math.imul(h1 ^ ch, 2654435761)
@@ -30,7 +30,7 @@ export function shortHash(str: string): string {
 // ── Provider-specific ID normalizers ──
 
 function sanitizeId(id: string, maxLen = 64): string {
-  return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, maxLen).replace(/_+$/, '')
+  return id.replace(/[^\w-]/g, '_').slice(0, maxLen).replace(/_+$/, '')
 }
 
 export function normalizeToolCallIdForAnthropic(id: string): string {
@@ -57,7 +57,11 @@ export function normalizeToolCallIdForGemini(id: string): string {
   return sanitizeId(id, 64)
 }
 
-export type ProviderType = 'anthropic' | 'openai-chat' | 'openai-responses' | 'gemini'
+// 复用配置层的定义，不再就地复制一份联合类型：
+// 将来新增 provider（如 bedrock）只需改 defaults.ts，这里的 switch 会因
+// 返回类型不完整而被 tsc 拦下，而不是两边各留一个"看起来对得上"的定义。
+// 仍 re-export，保持 `from './transformMessages'` 这条既有导入路径可用。
+export type { ProviderType }
 
 export interface RepairDiagnostics {
   inputMessages: number
@@ -150,22 +154,25 @@ function getNormalizer(targetProvider: ProviderType): (id: string) => string {
 function stringifyContent(content: LLMMessage['content']): string {
   if (typeof content === 'string')
     return content
-  return content
-    .map((block) => {
-      switch (block.type) {
-        case 'text':
-        case 'thinking':
-          return block.text
-        case 'tool_result':
-          return block.content
-        case 'tool_use':
-          return `[tool call] ${block.name} ${JSON.stringify(block.input)}`
-        case 'image':
-          return `[image:${block.mimeType}]`
-      }
-    })
-    .filter(Boolean)
-    .join('\n')
+  const parts: string[] = []
+  for (const block of content) {
+    switch (block.type) {
+      case 'text':
+      case 'thinking':
+        parts.push(block.text)
+        break
+      case 'tool_result':
+        parts.push(block.content)
+        break
+      case 'tool_use':
+        parts.push(`[tool call] ${block.name} ${JSON.stringify(block.input)}`)
+        break
+      case 'image':
+        parts.push(`[image:${block.mimeType}]`)
+        break
+    }
+  }
+  return parts.filter(Boolean).join('\n')
 }
 
 function textifyToolMessage(msg: LLMMessage): LLMMessage | null {
@@ -284,7 +291,8 @@ function normalizeIdsAndThinking(messages: LLMMessage[], targetProvider: Provide
             if (targetProvider === 'openai-chat') {
               // OpenAI Chat 不支持 thinking 块 — 降级为 text
               signedThinkingDowngraded++
-              if (block.text) transformedContent.push({ type: 'text', text: block.text })
+              if (block.text)
+                transformedContent.push({ type: 'text', text: block.text })
             }
             else if (targetSourceModel && block.sourceModel && block.sourceModel !== targetSourceModel) {
               // 跨模型: signature 不兼容。目标分化:
@@ -294,7 +302,8 @@ function normalizeIdsAndThinking(messages: LLMMessage[], targetProvider: Provide
               //     (DeepSeek 等 Anthropic 兼容 API 要求 thinking 块必须回传)
               signedThinkingDowngraded++
               if (targetProvider === 'openai-responses') {
-                if (block.text) transformedContent.push({ type: 'text', text: block.text })
+                if (block.text)
+                  transformedContent.push({ type: 'text', text: block.text })
               }
               else {
                 transformedContent.push({ type: 'thinking', text: block.text ?? '', sourceModel: block.sourceModel })
@@ -304,7 +313,8 @@ function normalizeIdsAndThinking(messages: LLMMessage[], targetProvider: Provide
               // 无 sourceModel 但有 signature — 来源不明, 同样按目标分化处理
               signedThinkingDowngraded++
               if (targetProvider === 'openai-responses') {
-                if (block.text) transformedContent.push({ type: 'text', text: block.text })
+                if (block.text)
+                  transformedContent.push({ type: 'text', text: block.text })
               }
               else {
                 transformedContent.push({ type: 'thinking', text: block.text ?? '' })
@@ -392,7 +402,7 @@ function sanitizeUnsupportedHistoricalTools(
   targetProvider: ProviderType,
   diagnostics?: RepairDiagnostics,
 ): LLMMessage[] {
-  const builtinToolNames = listBuiltinLlmTools(targetProvider as DefaultsProviderType).map(tool => tool.name)
+  const builtinToolNames = listBuiltinLlmTools(targetProvider).map(tool => tool.name)
   const allowedToolNames = new Set(builtinToolNames)
   const allowedHistoricalToolNames = new Set<string>(allowedToolNames)
   const canonicalIntents = getProviderToolCatalog(targetProvider).getCanonicalToolIntents()

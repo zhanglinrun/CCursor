@@ -1,10 +1,15 @@
 .vscode/**
 .vscode-test/**
 .obfuscate-tmp/**
+/*.vsix
+# 调试用的 DOM 快照（26 个 html，约 7.4MB）—— 占了整个包的一半以上，且运行时完全用不到
+.preview/**
 out/**
 src/**
 tools/**
 scripts/**
+# 前端预览工具（dev-only）—— 只在本地开发时用，运行时用不到
+dev/**
 .gitignore
 .yarnrc
 .npmrc

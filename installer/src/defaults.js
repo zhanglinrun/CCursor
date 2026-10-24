@@ -133,17 +133,16 @@ export const DEFAULT_WEB_TOOLS = {
   $schemaVersion: 1,
   search: {
     providers: [
-      { id: 'default-ddg', type: 'duckduckgo', enabled: true },
-      { id: 'default-exa', type: 'exa', enabled: false },
       { id: 'default-tavily', type: 'tavily', enabled: false },
-      { id: 'default-brave', type: 'brave', enabled: false },
-      { id: 'default-jina', type: 'jina', enabled: false },
-      { id: 'default-firecrawl', type: 'firecrawl', enabled: false },
+      { id: 'default-ddg', type: 'duckduckgo', enabled: false },
     ],
     parallel: false,
     maxResults: 10,
+    fallbackToDuckDuckGo: true,
   },
   fetch: {
-    provider: 'builtin',
+    // 默认走 Tavily 抓取（复用 search 里 Tavily 的 key / baseUrl）：
+    // 内置抓取会被 Cloudflare 挑战页拦掉（linux.do 这类站点返回 403）。
+    provider: 'tavily',
   },
 };
