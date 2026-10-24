@@ -36,6 +36,7 @@ jobs:
 
           local_version="$(node -p "require('./Cursor++/package.json').version")"
           echo "local=$local_version" >> "$GITHUB_OUTPUT"
+          tracked_upstream_version="$(node -p "require('./upstream-sources.json').cometix.version")"
 
           # 取上游最新 release；没有 release 时回退到最新 tag
           upstream_tag="$(gh release view --repo "$UPSTREAM_REPO" --json tagName -q .tagName 2>/dev/null || true)"
@@ -52,10 +53,10 @@ jobs:
           upstream_version="${upstream_tag#v}"
           echo "upstream=$upstream_version" >> "$GITHUB_OUTPUT"
 
-          # 语义化版本比较：上游 > 本地才需要跟进
-          # 上游 0.0.14 < 本地 0.0.16 属正常（二改版已经领先），不应打扰
+          # 比较已整合的上游基线；本 fork 的独立版本号不代表上游进度
+          # 更新 upstream-sources.json 中的 cometix.version 可确认已整合的上游版本
           higher="$(node -e "
-            const [a, b] = ['$upstream_version', '$local_version'].map(v => v.split('.').map(Number));
+            const [a, b] = ['$upstream_version', '$tracked_upstream_version'].map(v => v.split('.').map(Number));
             let cmp = 0;
             for (let i = 0; i < Math.max(a.length, b.length); i++) {
               const x = a[i] ?? 0, y = b[i] ?? 0;

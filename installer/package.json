@@ -1,6 +1,6 @@
 {
-  "name": "@cometix/ccursor",
-  "version": "0.0.26",
+  "name": "@zhanglinrun/ccursor",
+  "version": "0.1.0",
   "description": "Cursor++ BYOK Installer — Bring Your Own Key for Cursor IDE",
   "type": "module",
   "bin": {
@@ -24,12 +24,9 @@
   ],
   "author": "CometixSpace",
   "license": "AGPL-3.0-or-later",
-  "private": false,
-  "publishConfig": {
-    "access": "public"
-  },
+  "private": true,
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "acorn": "^8.14.0",
@@ -41,5 +38,10 @@
   },
   "allowScripts": {
     "esbuild@0.28.0": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhanglinrun/CCursor.git",
+    "directory": "installer"
   }
 }

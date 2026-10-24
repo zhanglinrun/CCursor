@@ -54,6 +54,7 @@ import { fileURLToPath } from 'node:url'
 // 复用 installer 的跨平台 Cursor 定位（macOS / Linux / Windows 各自的默认安装路径
 // 与 CCURSOR_CURSOR_ROOT 覆盖都已在那边处理过，不重复实现）
 import { findCursorPathsDetailed, formatDiagnostic } from '../installer/src/detect.js'
+import { writePackageVersion } from './package-version.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..')
@@ -231,20 +232,6 @@ function bumpVersion(version, kind) {
   fail(`未知的 --bump 值 "${kind}"，可选 patch | minor | major`)
 }
 
-/**
- * 只替换首个顶层 `"version"` 字段。
- *
- * 刻意不做 JSON 往返序列化：那样会重排/丢失注释与原有格式，
- * 让每次发版都带上无关的 diff 噪音。
- */
-function writePackageVersion(dir, nextVersion) {
-  const path = join(dir, 'package.json')
-  const source = readFileSync(path, 'utf8')
-  const replaced = source.replace(/^(\s*"version"\s*:\s*")[^"]+(")/m, `$1${nextVersion}$2`)
-  if (replaced === source)
-    fail(`在 ${path} 中未找到可替换的 "version" 字段`)
-  writeFileSync(path, replaced)
-}
 
 // ── 前置检查 ──
 
@@ -389,43 +376,10 @@ function resolveVersion() {
 
 function runChecks() {
   if (skipChecks) {
-    console.log(`\n${dim('── 检查：已跳过（--skip-checks）')}`)
+    info('Checks skipped (--skip-checks)')
     return
   }
-
-  step('检查（typecheck + lint + 单测）')
-
-  for (const toolName of ['tsc', 'eslint', 'vitest']) {
-    if (!resolveNodeTool(toolName))
-      fail(`找不到 ${toolName} —— 请先在 Cursor++/ 下执行 pnpm install。`)
-  }
-
-  info('typecheck…')
-  runTool('tsc', ['--noEmit'])
-
-  info('lint…')
-  runTool('eslint', ['src'])
-
-  // 实时网络测试默认跳过：发版不应依赖外网与第三方配额（会因对方限流而假失败）
-  // 单测里的 sqlite 用例要从 **Cursor 安装目录**加载 @vscode/sqlite3
-  // （见 Cursor++/src/server/database/sqlite.ts 的 getCursorAppCandidates）。
-  // 它那边的自动探测在两种常见情况下会落空：
-  //   · Cursor 装在非默认盘符或自定义路径（硬编码候选里没有，例如 D:\…）；
-  //   · vitest 下 __dirname 指向本仓库源码目录，"相对自身往上 3 层"反推出的不是安装目录。
-  // 扩展代码本身就为此提供了 CURSOR_APP_ROOT 覆盖，而"Cursor 装在哪"这件事上面已经探到了，
-  // 这里直接接上 —— 否则测试会栽在一个脚本已经知道答案的问题上。
-  const testEnv = cursorAppRoot
-    ? { ...process.env, CURSOR_APP_ROOT: cursorAppRoot }
-    : process.env
-  if (cursorAppRoot)
-    info(dim(`CURSOR_APP_ROOT=${cursorAppRoot}`))
-  else
-    info(dim('未定位到 Cursor 安装目录，未注入 CURSOR_APP_ROOT（依赖 sqlite3 的用例可能失败）'))
-
-  info('unit tests…')
-  runTool('vitest', ['run'], { env: testEnv })
-
-  ok('检查通过')
+  run(process.execPath, [join(repoRoot, 'scripts', 'verify.mjs')])
 }
 
 function buildAndPackage(version) {
@@ -751,7 +705,7 @@ function publish({ version, tag, bumped }, vsixPath) {
 
   step('提交版本号变更')
   if (bumped) {
-    run('git', ['add', join(extensionDir, 'package.json'), join(installerDir, 'package.json')])
+    run('git', ['add', join(extensionDir, 'package.json'), join(installerDir, 'package.json'), join(installerDir, 'package-lock.json')])
     run('git', ['commit', '-m', `chore: release ${tag}`])
     ok(`已提交版本号变更（${tag}）`)
   }
@@ -810,7 +764,7 @@ else if (localOnly) {
 }
 else {
   console.log(green(`发布完成：${target.tag}`))
-  console.log(`  Release：https://github.com/Yoahoug/CCursor-BYOK/releases/tag/${target.tag}`)
+  console.log(`  Release：https://github.com/zhanglinrun/CCursor/releases/tag/${target.tag}`)
   if (shouldInstallLocal)
     console.log(`  本地扩展已同步更新；重启 Cursor 后生效。`)
   console.log(`  其他机器会在下次检查更新时（最长 4 小时）提示 Update Now。`)

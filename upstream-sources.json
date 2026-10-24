@@ -1,0 +1,49 @@
+{
+  "cometix": {
+    "repository": "CometixSpace/CCursor",
+    "commit": "fcac85db793fc2c8cda3318b96ec5a41c24f5e26",
+    "version": "0.0.15"
+  },
+  "yoahoug": {
+    "repository": "Yoahoug/CCursor-BYOK",
+    "commit": "0e239a7546e4bc1f5e9778b345a856a732c42be9",
+    "version": "0.0.26"
+  },
+  "pullRequests": [
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 31,
+      "commit": "30de625730b9b437a4eeaa5d1e242feb79be2736"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 33,
+      "commit": "b448fdfb4f74a56238f001d0684dcb7dad138bcb"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 38,
+      "commit": "77062393352fab2b9722739b1817fd05cc4bca0e"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 30,
+      "commit": "c632359ebc889fd6727de9987f1ffaf03e1265de"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 35,
+      "commit": "dcc7d01ba2da8876a44cc236235de66e07ab7704"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 18,
+      "commit": "38d830525ad3ceb8add1826801f1d8ed8e42cd71"
+    },
+    {
+      "repository": "CometixSpace/CCursor",
+      "number": 17,
+      "commit": "76bbaaffccdc1a00890fb42db551a1b5248ec685"
+    }
+  ]
+}

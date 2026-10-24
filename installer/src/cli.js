@@ -2,9 +2,9 @@
  * ccursor CLI — Cursor++ BYOK Installer
  *
  * Usage:
- *   npx @cometix/ccursor install     # Install extension + apply patches
- *   npx @cometix/ccursor uninstall   # Remove extension + restore patches
- *   npx @cometix/ccursor status      # Check installation status
+ *   node installer/dist/cli.cjs install     # Install extension + apply patches
+ *   node installer/dist/cli.cjs uninstall   # Remove extension + restore patches
+ *   node installer/dist/cli.cjs status      # Check installation status
  */
 
 import { install } from './install.js';

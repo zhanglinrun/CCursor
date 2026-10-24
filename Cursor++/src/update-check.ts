@@ -6,7 +6,7 @@
  * 为什么不用上游那条 `npx @cometix/ccursor update`：
  *   上游命令会下载并安装 **官方版**，把我们这边的改动（Web Fetch 走 Tavily、
  *   Web Search 修复等）整个覆盖掉。二改版必须指向自己的发布通道，
- *   所以这里读 Yoahoug/CCursor-BYOK 的 Release，并直接用它的 .vsix 资产做更新。
+ *   所以这里读 zhanglinrun/CCursor 的 Release，并直接用它的 .vsix 资产做更新。
  *
  * 走 GitHub Releases API 而不是 npm：仓库是 public，匿名可读，无需 token；
  * 且 Release 里挂着构建好的 .vsix，更新时不必依赖 npm 上是否存在同名包。
@@ -21,7 +21,7 @@ import * as vscode from 'vscode'
 import { compareVersions, EXTENSION_VERSION } from './version'
 
 /** 本二改版的发布通道 */
-const RELEASE_REPO = 'Yoahoug/CCursor-BYOK'
+const RELEASE_REPO = 'zhanglinrun/CCursor'
 const RELEASE_API_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`
 const RELEASES_PAGE_URL = `https://github.com/${RELEASE_REPO}/releases`
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours

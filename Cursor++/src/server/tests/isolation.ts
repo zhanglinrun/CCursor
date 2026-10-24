@@ -5,7 +5,9 @@ const testHome = vi.hoisted(() => {
   const { mkdtempSync } = process.getBuiltinModule('node:fs')
   const { tmpdir } = process.getBuiltinModule('node:os')
   const { join } = process.getBuiltinModule('node:path')
-  return mkdtempSync(join(tmpdir(), 'ccursor-test-home-'))
+  const home = mkdtempSync(join(tmpdir(), 'ccursor-test-home-'))
+  process.env.BYOK_AGENT_DB_PATH = join(home, 'cursor.db')
+  return home
 })
 
 vi.mock('node:os', async (importOriginal) => {
