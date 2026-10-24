@@ -61,6 +61,7 @@ export const AGENT_HOST_WS_ORIGINS_MARKER = AGENT_WS_ORIGINS_MARKER;
  *   3. 锚点本身用容错正则(允许空白/引号风格/键顺序),不用精确字面量。
  */
 export const TURN_ROUTER_FINGERPRINT = '@anysphere/agent-host:local-loop-turn-router';
+export const CONNECT_TURN_ROUTE_MARKER = '/*BYOK-CONNECT-TURN*/';
 export const CONNECT_TURN_ROUTE = '{runtime:"connect",reason:"byok-connect-routed",disposition:"fallback"}';
 
 // 匹配 { ... runtime:"managed-local" ... reason:"eligible" ... }，任意键顺序与空白。
@@ -73,7 +74,7 @@ export function hasTurnRouter(source) {
 }
 
 export function isConnectTurnRoutePinned(source) {
-  return source.includes(CONNECT_TURN_ROUTE);
+  return source.includes(CONNECT_TURN_ROUTE + CONNECT_TURN_ROUTE_MARKER);
 }
 
 export function countEligibleTurnRoutes(source) {
@@ -87,7 +88,7 @@ export function forceConnectTurnRoute(source) {
   const required = hasTurnRouter(source);
   if (!required) return { changed: false, matched: isConnectTurnRoutePinned(source), required: false, source };
   const pinned = isConnectTurnRoutePinned(source);
-  const replaced = source.replace(new RegExp(MANAGED_LOCAL_ELIGIBLE_ROUTE_RE.source, 'g'), CONNECT_TURN_ROUTE);
+  const replaced = source.replace(new RegExp(MANAGED_LOCAL_ELIGIBLE_ROUTE_RE.source, 'g'), CONNECT_TURN_ROUTE + CONNECT_TURN_ROUTE_MARKER);
   const changed = replaced !== source;
   return { changed, matched: pinned || changed, required: true, source: replaced };
 }

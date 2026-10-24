@@ -36,3 +36,11 @@ test('older bundles without the routing fingerprint are unchanged', () => {
   assert.equal(result.required, false);
   assert.equal(result.source, source);
 });
+
+test('native BYOK branch does not hide an unrecognized eligible route', () => {
+  const source = `const log=${JSON.stringify(TURN_ROUTER_FINGERPRINT)};const native={runtime:"connect",reason:"byok-connect-routed",disposition:"fallback"};const changed={"runtime":"managed-local","reason":"eligible"};`;
+  const result = forceConnectTurnRoute(source);
+  assert.equal(result.required, true);
+  assert.equal(result.changed, false);
+  assert.equal(result.matched, false);
+});
