@@ -26,3 +26,7 @@ pnpm-workspace.yaml
 vitest.config.ts
 .tmp-*
 .claude/**
+# Development-only benchmarks and payload snapshots
+bench-*.mts
+vitest.bench.config.mts
+tool-payload-baseline.json
