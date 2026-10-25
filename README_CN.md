@@ -2,7 +2,7 @@
 
 [English](README.md) · [整合与维护记录](docs/INTEGRATION.md) · [更新日志](CHANGELOG.md)
 
-基于 [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor)，整合 [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) 的增强和部分上游兼容修复。当前版本 **0.1.1**，维护仓库为 **zhanglinrun/CCursor**，并非原项目的官方发行版。
+基于 [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor)，整合 [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) 的增强和部分上游兼容修复。当前开发版本 **0.1.2**，最新正式版 **0.1.1**，维护仓库为 **zhanglinrun/CCursor**，并非原项目的官方发行版。
 
 ## 已整合内容
 
@@ -43,7 +43,7 @@ node installer/dist/cli.cjs check
 构建产物：
 
 - `installer/dist/cli.cjs` 和同目录的 `models-catalog.json`。
-- `installer/vsix/cursor2plus-0.1.1.vsix`。
+- `installer/vsix/cursor2plus-0.1.2.vsix`。
 
 保留 installer 目录结构，CLI 还需要本地依赖和旁边的 `vsix` 目录。
 

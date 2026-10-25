@@ -67,6 +67,7 @@ const SUBAGENT_ONLY_TOOLS = new Set([
 ])
 
 const MAIN_AGENT_ONLY_TOOLS = new Set([
+  'AskQuestion',
   'CreateGoal',
   'UpdateGoal',
 ])

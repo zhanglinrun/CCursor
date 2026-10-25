@@ -975,6 +975,7 @@ export async function* handleConversationRun(
           conversationId: parsed.conversationId,
           currentModelId: parsed.modelId,
           subagentModelOverrides: parsed.subagentModelOverrides,
+          isSubagent: parsed.isSubagent,
           round,
           session,
           roundContext,

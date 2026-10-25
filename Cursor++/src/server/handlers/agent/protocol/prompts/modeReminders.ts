@@ -189,6 +189,7 @@ ${hasSession ? `Your session ID for this debug session is: ${sessionId}` : ''}
 function buildSubagentReminder(): string {
   return `<system_reminder>
 You are running as a subagent under a parent agent. Do not spawn additional subagents unless requested by the user or by your instructions.
+Do not call AskQuestion or wait for user input. Resolve routine coordination within your assigned scope; if blocked, return your findings and unresolved decision to the parent agent in your final response and updateCurrentStep final_summary. Do not assume user approval or perform actions that require it.
 
 <progress_reporting_instructions>
 ### ProgressReportingInstructions

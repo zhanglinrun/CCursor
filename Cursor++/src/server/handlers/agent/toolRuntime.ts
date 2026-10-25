@@ -73,6 +73,7 @@ export async function* runToolCall(params: {
   conversationId: string
   currentModelId: string
   subagentModelOverrides?: SubagentModelOverride[]
+  isSubagent?: boolean
   round: number
   session: AgentSession | null
   roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>
@@ -215,6 +216,25 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
   }
 
   yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId)
+
+  // 旧历史/动态调用也不能让子代理进入面向用户的无限提问等待。
+  if (cursorToolType === 'askQuestionToolCall' && params.isSubagent) {
+    const finalized = finalizeToolCall({
+      roundContext: params.roundContext,
+      messages: params.messages,
+      cursorToolType,
+      toolName: tc.name,
+      callId: tc.callId,
+      startedArgs,
+      rawToolResult: { result: { case: 'error', value: {
+        errorMessage: 'Subagents cannot ask the user directly. Do not retry AskQuestion. Return your findings and unresolved decision to the parent agent in your final response and updateCurrentStep final_summary. Do not assume user approval.',
+      } } },
+      input: sanitizedInput,
+      modelCallId,
+    })
+    yield finalized.frame
+    return
+  }
 
   // communicateUpdateToolCall: 服务端自动完成 (不走 exec)
   // 子代理通过此工具报告进度和最终摘要, 客户端从帧中提取 finalSummary

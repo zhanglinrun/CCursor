@@ -2,7 +2,7 @@
 
 [中文](README_CN.md) · [Integration and maintenance](docs/INTEGRATION.md) · [Changelog](CHANGELOG.md)
 
-An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Current version: **0.1.1**. This is not an official CometixSpace or Yoahoug distribution.
+An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Development version: **0.1.2**; latest stable release: **0.1.1**. This is not an official CometixSpace or Yoahoug distribution.
 
 ## Included
 
@@ -37,7 +37,7 @@ Verification uses `Temp/tests` and synthetic test homes, not your normal BYOK co
 Build outputs:
 
 - `installer/dist/cli.cjs` and its sibling `models-catalog.json`.
-- `installer/vsix/cursor2plus-0.1.1.vsix`.
+- `installer/vsix/cursor2plus-0.1.2.vsix`.
 
 Keep the installer directory layout intact. The CLI requires its local dependencies and the sibling `vsix` directory.
 
