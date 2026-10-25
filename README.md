@@ -62,6 +62,15 @@ Dragging a VSIX into Cursor does not apply the required application patches. Pan
 
 The update channel now points to **zhanglinrun/CCursor**. Until this fork publishes its own Release, build from source. `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
 
+## Context compaction and model catalog
+
+- Compaction follows PI-Desktop `7a95fd0`'s soft/hard budgets: reserve output/prompt headroom, try at 90% of the safe budget, and block ordinary requests only at the hard limit. With a 1M window and 32K output budget, the trigger/hard limit are **855K/950K**; with 64K output they are **842.4K/936K**.
+- Check before every model request, including new prompts, tool results and schemas. A failed soft-trigger summary preserves history and may continue below the hard limit. Oversized summary input is summarized in bounded chunks; failed/empty/truncated summaries are never replaced with a local text excerpt.
+- The model catalog uses `https://models.dev/api.json`, with manual refresh and a bundled offline fallback. Click **Fetch** and select an available endpoint model: name, protocol, capabilities, token limits, reasoning and quick-switch defaults fill automatically, without a second catalog picker. The wire model id stays unchanged and Fast stays off. Changing the model reapplies defaults; manual edits remain available and **Save** is required. Unknown/ambiguous models require manual limits rather than fuzzy guesses; address and API keys stay untouched.
+- Refresh the build snapshot with `node installer/scripts/update-models-catalog.mjs`, then rebuild. This does not touch user configuration.
+
+For development GitHub queries, use `pwsh -File scripts/github-api.ps1 -Endpoint repos/vastsa/PI-Desktop` or authenticated `gh api`. The script runs GET only, reuses the system proxy and existing login, and never stores tokens or changes global settings. Raw HTTP does not reuse the CLI login (anonymous: 60/hour; authenticated REST normally: 5000/hour).
+
 ## Remote SSH and verification limits
 
 The current branch passed a read-only patch preflight against **Windows Cursor 3.27.12**. This verifies bundle compatibility, not a live SSH Agent session. The earlier local 3.15.19 build lacked the glass refresh anchor and is rejected by preflight.

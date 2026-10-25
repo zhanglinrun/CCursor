@@ -72,6 +72,15 @@ node installer/dist/cli.cjs uninstall
 
 更新检查已指向 **zhanglinrun/CCursor**。本仓库尚未发布自己的 Release 时，请从源码构建。`npx @cometix/ccursor` 会安装上游版本，覆盖此分支的增强。
 
+## 自动压缩与模型目录
+
+- 自动压缩参考 PI-Desktop `7a95fd0`：先扣除模型输出/提示预留，在安全预算的 90% 开始尝试，达到硬上限才禁止继续请求。1M 上下文、32K 最大输出时，触发值为 **855K**，硬上限 **950K**；64K 最大输出时为 **842.4K / 936K**。
+- 每次模型请求前检查，包含新消息、工具结果和 schema；软阈值摘要失败会保留原历史，低于硬上限仍可继续。摘要本身按预算分块，手动/自动摘要失败不使用截取文本兜底。
+- 模型目录来自 `https://models.dev/api.json`，支持手动刷新和离线快照。在服务商面板点击 **Fetch**，再选择可用模型，即自动填充显示名、协议、能力、上下文、最大输出、思考档位与快捷切换参数，无需再选目录来源。API Model 保留端点原名，Fast 默认关闭；更换模型会重新预填，手动编辑仍可覆盖，点击 **Save** 才生效。找不到可靠匹配时手动填写限制，不猜相似模型，也不改地址或 API Key。中转站实际限制以服务商为准。
+- 构建前更新内置快照：`node installer/scripts/update-models-catalog.mjs`，然后重新构建。该命令不修改用户配置。
+
+开发时查询 GitHub 可用 `pwsh -File scripts/github-api.ps1 -Endpoint repos/vastsa/PI-Desktop`，或直接用已有认证的 `gh api`。脚本仅执行 GET，复用系统代理和现有登录，不保存 Token、不改全局配置。裸 HTTP 不复用 GitHub CLI 登录，可能耗尽共享出口匿名 60 次/小时额度；认证常规额度为 5000 次/小时。
+
 ## SSH 与兼容边界
 
 本分支已对本机 **Windows Cursor 3.27.12** 完成只读补丁预检，全部目标匹配。这证明安装文件的补丁定位通过，**不等于真实 SSH Agent 已验收**。此前自动检测到的 3.15.19 缺少 glass 刷新锚点，预检会拒绝它。
