@@ -2,7 +2,7 @@
 
 [中文](README_CN.md) · [Integration and maintenance](docs/INTEGRATION.md) · [Changelog](CHANGELOG.md)
 
-An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Development version: **0.1.2**; latest stable release: **0.1.1**. This is not an official CometixSpace or Yoahoug distribution.
+An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Current version: **0.1.2**. This is not an official CometixSpace or Yoahoug distribution.
 
 ## Included
 
@@ -60,7 +60,7 @@ node installer/dist/cli.cjs uninstall
 
 Dragging a VSIX into Cursor does not apply the required application patches. Panel updates replace the extension body only; changes under `installer/src/` require rebuilding and running the installer. After each Cursor update, rebuild if necessary and repeat `check` and installation/update.
 
-The update channel points to **zhanglinrun/CCursor**. Existing installations can use **检查扩展更新** in the Cursor++ panel to download the latest stable Release; fully restart Cursor after updating. [Download v0.1.1](https://github.com/zhanglinrun/CCursor/releases/tag/v0.1.1). `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
+The update channel points to **zhanglinrun/CCursor**. Existing installations can use **检查扩展更新** in the Cursor++ panel to download the latest stable Release; fully restart Cursor after updating. [Download v0.1.2](https://github.com/zhanglinrun/CCursor/releases/tag/v0.1.2). `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
 
 ## Context compaction and model catalog
 

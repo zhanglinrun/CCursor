@@ -1,6 +1,6 @@
 # 整合与维护记录
 
-本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前开发版本为 0.1.2，最新正式版为 0.1.1。
+本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前版本为 0.1.2。
 
 ## 来源
 
@@ -73,4 +73,4 @@ git fetch https://github.com/CometixSpace/CCursor.git refs/pull/38/head:refs/rem
 - release 脚本不带上述限制参数时会安装本机、打 tag、推送并创建 Release；只在明确要发布时使用。它要求发布分支为 main。
 - 面板自动更新依赖本 fork 的 GitHub Release，且只替换 VSIX 扩展本体。需要更新程序补丁时仍须执行完整 installer。
 
-构建、安装和公开发布是不同步骤。v0.1.1 通过 GitHub 正式 Release 分发 VSIX，供已安装本分支的面板更新使用；不发布 npm 包。
+构建、安装和公开发布是不同步骤。v0.1.2 通过 GitHub 正式 Release 分发 VSIX，供已安装本分支的面板更新使用；不发布 npm 包。
