@@ -19,10 +19,10 @@ export function ProviderFields() {
   return (
     <>
       <div class="field">
-        <label>Name</label>
+        <label>服务商名称</label>
         <input
           type="text"
-          placeholder="My Provider"
+          placeholder="例如：我的中转站"
           x-effect="if(document.activeElement !== $el) $el.value = $store.app.getDraft(p.id).name || ''"
           x-on:input="$store.app.updateField(p.id, 'name', $event.target.value)"
           x-bind:class="{ 'invalid': $store.app.validate(p.id).errors.name }"
@@ -36,7 +36,7 @@ export function ProviderFields() {
         只要有一个走 Anthropic 就有意义 —— 而"是否有"由模型决定，不是中转站。
       */}
       <div class="field" x-show="$store.app.providerUsesAnthropic(p.id)" x-cloak>
-        <label>Auth Kind</label>
+        <label>认证方式</label>
         <CustomSelect
           valueExpr="$store.app.getDraft(p.id).auth?.kind"
           changeExpr="$store.app.updateField(p.id, 'auth.kind', $value)"
@@ -46,8 +46,8 @@ export function ProviderFields() {
 
       <div class="field">
         <label>
-          {'Address '}
-          <span class="label-note">host and optional path prefix</span>
+          {'服务地址 '}
+          <span class="label-note">主机地址及可选路径前缀</span>
         </label>
         <input
           type="text"
@@ -60,7 +60,7 @@ export function ProviderFields() {
       </div>
 
       <div class="field" x-data="{ showKey: false }">
-        <label>Auth Value</label>
+        <label>API 密钥 / Token</label>
         <div class="input-reveal">
           <input
             x-bind:type="showKey ? 'text' : 'password'"
@@ -73,7 +73,7 @@ export function ProviderFields() {
             type="button"
             class="reveal-btn"
             x-on:click="showKey = !showKey"
-            title="Toggle visibility"
+            title="显示或隐藏密钥"
           >
             <span x-bind:class="showKey ? 'codicon codicon-eye-closed' : 'codicon codicon-eye'"></span>
           </button>
@@ -89,8 +89,8 @@ export function ProviderFields() {
       */}
       <div class="field" x-show="$store.app.providerUsesProxy(p.id)" x-cloak>
         <label>
-          {'Proxy URL '}
-          <span class="label-note">optional</span>
+          {'代理地址 '}
+          <span class="label-note">选填</span>
         </label>
         <input
           type="text"
@@ -102,8 +102,8 @@ export function ProviderFields() {
 
       <div class="field">
         <label>
-          {'Custom Headers '}
-          <span class="label-note">optional, JSON</span>
+          {'自定义请求头 '}
+          <span class="label-note">选填，JSON 格式</span>
         </label>
         <textarea
           rows={2}
@@ -113,7 +113,7 @@ export function ProviderFields() {
           {...{ 'x-bind:class': '{ \'invalid\': $store.app.headersInvalid[p.id] }' }}
         >
         </textarea>
-        <div class="err" {...{ 'x-show': '$store.app.headersInvalid[p.id]' }}>Invalid JSON</div>
+        <div class="err" {...{ 'x-show': '$store.app.headersInvalid[p.id]' }}>JSON 格式不正确</div>
       </div>
     </>
   )

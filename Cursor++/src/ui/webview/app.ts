@@ -43,13 +43,17 @@ export function initApp(Alpine: AlpineType) {
     get catalogSummary(): string {
       const status = this.catalogStatus as CatalogStatus | null
       if (!status)
-        return 'Model directory: models.dev · loading catalog…'
-      const source = { bundled: 'bundled snapshot', cache: 'local cache', remote: 'refreshed cache', empty: 'unavailable' }[status.source]
-      return `Model directory: models.dev · ${status.modelCount.toLocaleString()} models · ${status.providerCount.toLocaleString()} providers · ${source}`
+        return '正在读取模型目录…'
+      return `${status.modelCount.toLocaleString('zh-CN')} 个模型 · ${status.providerCount.toLocaleString('zh-CN')} 个服务商`
+    },
+
+    get catalogSourceLabel(): string {
+      const source = this.catalogStatus?.source as CatalogStatus['source'] | undefined
+      return source ? { bundled: '内置快照', cache: '本地缓存', remote: '已更新', empty: '暂不可用' }[source] : '读取中'
     },
 
     get catalogUpdatedAt(): string {
-      return this.catalogStatus?.updatedAt ? new Date(this.catalogStatus.updatedAt).toLocaleString() : 'Unknown (legacy snapshot)'
+      return this.catalogStatus?.updatedAt ? new Date(this.catalogStatus.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '暂无更新时间'
     },
 
     refreshCatalog() {
@@ -254,10 +258,10 @@ export function initApp(Alpine: AlpineType) {
 
     get updateButtonLabel(): string {
       if (this.updatePhase === 'checking')
-        return 'Checking…'
+        return '检查中…'
       if (this.updatePhase === 'installing')
-        return this.updateTargetVersion ? `Updating to ${this.updateTargetVersion}…` : 'Updating…'
-      return 'Check for Updates'
+        return this.updateTargetVersion ? `正在更新至 ${this.updateTargetVersion}…` : '更新中…'
+      return '检查扩展更新'
     },
 
     modelDefaultsPending: {} as Record<string, { pid: string, mid: string, apiModel: string, before: Record<string, any> }>,

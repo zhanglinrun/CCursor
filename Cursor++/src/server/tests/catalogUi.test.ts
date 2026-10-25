@@ -101,13 +101,15 @@ it('refreshes directory status without touching model drafts or opening a second
   const before = JSON.stringify(store.drafts)
   const status = { source: 'bundled', modelCount: 1234, providerCount: 20, updatedAt: '2026-10-25T10:00:00Z' }
   receive({ data: { type: 'catalogStatus', status } })
-  expect(store.catalogSummary).toContain('models.dev')
+  expect(store.catalogSummary).toBe('1,234 个模型 · 20 个服务商')
   expect(store.catalogSummary).toContain('1,234')
+  expect(store.catalogSourceLabel).toBe('内置快照')
   store.refreshCatalog()
   store.refreshCatalog()
   expect(postMessage.mock.calls.filter(([msg]) => msg.type === 'refreshCatalog')).toHaveLength(1)
   receive({ data: { type: 'catalogStatus', status: { ...status, source: 'remote', refreshing: false }, refreshed: true } })
   expect(store.catalogBusy).toBe(false)
+  expect(store.catalogSourceLabel).toBe('已更新')
   expect(JSON.stringify(store.drafts)).toBe(before)
 })
 
@@ -122,4 +124,16 @@ it('discards an earlier lookup when the same row has a newer lookup', () => {
   expect(model().contextTokenLimit).toBeUndefined()
   receive({ data: { type: 'catalogModelResolved', requestId: second, entry } })
   expect(model().contextTokenLimit).toBe(1050000)
+})
+
+it('uses Chinese labels for directory and update states', () => {
+  expect(store.catalogSummary).toBe('正在读取模型目录…')
+  expect(store.catalogSourceLabel).toBe('读取中')
+  expect(store.catalogUpdatedAt).toBe('暂无更新时间')
+  expect(store.updateButtonLabel).toBe('检查扩展更新')
+  store.updatePhase = 'checking'
+  expect(store.updateButtonLabel).toBe('检查中…')
+  store.updatePhase = 'installing'
+  store.updateTargetVersion = '0.2.0'
+  expect(store.updateButtonLabel).toBe('正在更新至 0.2.0…')
 })

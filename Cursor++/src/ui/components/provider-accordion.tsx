@@ -8,14 +8,14 @@ export function ProviderAccordion() {
       {/* Head — 始终可见 */}
       <div class="acc-head" {...{ 'x-on:click': '$store.app.toggleExpand(p.id)' }}>
         <span class="acc-caret" {...{ 'x-text': '$store.app.expanded[p.id] ? \'▼\' : \'▶\'' }}></span>
-        <span class="acc-title" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).name || \'(unnamed)\'' }}></span>
+        <span class="acc-title" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).name || \'未命名服务商\'' }}></span>
         {/* 显示人类可读的协议名, 而不是内部枚举 openai-responses */}
         <span class="acc-type" {...{ 'x-text': '$store.app.typeLabel(p.id)' }}></span>
-        <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' model\' + (($store.app.getDraftOrOriginal(p.id).models || []).length === 1 ? \'\' : \'s\')' }}></span>
-        <span class="acc-dot" title="Unsaved changes" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
+        <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' 个模型\'' }}></span>
+        <span class="acc-dot" title="有未保存的更改" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
         <span class="acc-sort" {...{ 'x-on:click.stop': '' }}>
-          <button class="sort-btn" title="Move up" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': 'pIdx > 0' }}>&#9650;</button>
-          <button class="sort-btn" title="Move down" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': 'pIdx < $store.app.providers.length - 1' }}>&#9660;</button>
+          <button class="sort-btn" title="上移" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': 'pIdx > 0' }}>&#9650;</button>
+          <button class="sort-btn" title="下移" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': 'pIdx < $store.app.providers.length - 1' }}>&#9660;</button>
         </span>
       </div>
       {/* Body — 可折叠 */}
@@ -23,9 +23,9 @@ export function ProviderAccordion() {
         <ProviderFields />
         <ModelsSection />
         <div class="actions-bar">
-          <button class="danger" {...{ 'x-on:click': '$store.app.requestDeleteProvider(p.id)' }}>Delete</button>
-          <button class="ghost" {...{ 'x-on:click': '$store.app.resetProvider(p.id)' }}>Reset</button>
-          <button {...{ 'x-on:click': '$store.app.saveProvider(p.id)' }}>Save</button>
+          <button class="danger" {...{ 'x-on:click': '$store.app.requestDeleteProvider(p.id)' }}>删除服务商</button>
+          <button class="ghost" {...{ 'x-on:click': '$store.app.resetProvider(p.id)' }}>撤销更改</button>
+          <button {...{ 'x-on:click': '$store.app.saveProvider(p.id)' }}>保存配置</button>
         </div>
       </div>
     </div>

@@ -143,6 +143,38 @@ export const styles = /* css */ `
   }
   h3 .h3-actions { display: flex; gap: 4px; align-items: center; }
 
+  /* ── 配置页：目录摘要、服务商与低频操作分层 ──────────────── */
+  .config-page { max-width: 960px; margin: 0 auto; }
+  .config-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px 0 14px; }
+  .config-header h2 { margin: 0; color: var(--cpp-text); font-size: 16px; font-weight: 650; line-height: 1.4; letter-spacing: 0; }
+  .config-header p { margin: 4px 0 0; color: var(--cpp-text-dim); font-size: 11px; }
+  .config-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .catalog-card { padding: 14px; margin-bottom: 16px; border: 1px solid var(--cpp-border); border-radius: 10px; background: var(--cpp-surface); }
+  .catalog-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .catalog-info { flex: 1 1 180px; min-width: 0; }
+  .catalog-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+  .catalog-title { font-weight: 650; color: var(--cpp-text); font-size: 12px; }
+  .catalog-source { color: var(--cpp-text-dim); font-size: 11px; }
+  .catalog-badge { padding: 2px 6px; border: 1px solid var(--cpp-border); border-radius: var(--cpp-radius-pill); color: var(--cpp-text-dim); font-size: 10px; line-height: 1.3; }
+  .catalog-counts { margin-top: 6px; font-size: 12px; color: var(--cpp-text); line-height: 1.5; }
+  button.catalog-refresh { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 30px; flex: 0 0 auto; }
+  .catalog-refresh-icon { display: inline-block; font-size: 16px; line-height: 1; }
+  .catalog-refresh-icon.is-spinning { animation: catalog-spin 1s linear infinite; }
+  @keyframes catalog-spin { to { transform: rotate(360deg); } }
+  .catalog-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 10px; color: var(--cpp-text-dim); font-size: 11px; }
+  .catalog-note { border-top: 1px solid var(--cpp-border); padding-top: 9px; margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--cpp-text-dim); }
+  .catalog-error { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 9px; background: var(--cpp-danger-soft); border-radius: var(--cpp-radius-sm); color: var(--cpp-danger); overflow-wrap: anywhere; font-size: 11px; }
+  @media (max-width: 420px) {
+    .config-header { align-items: flex-start; }
+    .config-actions { width: 100%; }
+    .config-actions > button { flex: 1; }
+    .catalog-card { padding: 12px; }
+    .catalog-info { flex-basis: 150px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .catalog-refresh-icon.is-spinning { animation: none; }
+  }
+
   /* ── 按钮 ──────────────────────────────────────────────── */
   button {
     background: var(--cpp-accent);
@@ -986,9 +1018,14 @@ export const styles = /* css */ `
   }
   .reveal-btn:hover:not(:disabled) { background: transparent; color: var(--cpp-text); }
 
-  /* 底部操作栏：两行分组，第一行是配置入口，第二行是「检查更新」 */
-  .footer { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
-  .footer-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* 高级配置折叠收纳，更新按钮不与配置文件入口混排。 */
+  .footer { max-width: 960px; margin: 20px auto 0; padding-top: 14px; border-top: 1px solid var(--cpp-border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .footer-row { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+  .footer-advanced { flex: 1 1 130px; min-width: 0; }
+  .footer-advanced > summary { width: fit-content; cursor: pointer; color: var(--cpp-text-dim); font-size: 11px; padding: 6px 0; }
+  .footer-advanced > summary:hover { color: var(--cpp-text); }
+  .footer-advanced > summary:focus-visible { outline: 2px solid var(--cpp-accent); outline-offset: 3px; }
+  .footer-update { flex: 0 0 auto; }
 
   /* ── Toast ────────────────────────────────────────────── */
   .toast-container {

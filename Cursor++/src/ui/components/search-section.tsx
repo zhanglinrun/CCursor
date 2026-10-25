@@ -24,32 +24,32 @@ const FETCH_PROVIDERS = [
 export function WebToolsButton() {
   return (
     <button
-      class="search-btn"
+      class="secondary"
       x-on:click="$store.app.webToolsOpen = true"
-      title="Configure search and web fetch providers"
+      title="配置联网搜索与网页抓取服务"
     >
-      Web Tools
+      联网工具
     </button>
   )
 }
 
 export function WebToolsDialog() {
   return (
-    <Modal showExpr="$store.app.webToolsOpen" title="Web Tools">
+    <Modal showExpr="$store.app.webToolsOpen" title="联网工具">
       <div class="wt-tabs">
         <button
           class="wt-tab"
           x-bind:class="{ active: $store.app.webToolsTab === 'search' }"
           x-on:click="$store.app.webToolsTab = 'search'"
         >
-          Search
+          搜索
         </button>
         <button
           class="wt-tab"
           x-bind:class="{ active: $store.app.webToolsTab === 'fetch' }"
           x-on:click="$store.app.webToolsTab = 'fetch'"
         >
-          Fetch
+          网页抓取
         </button>
       </div>
 

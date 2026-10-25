@@ -30,7 +30,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
     : ''
 
   return (
-    <html>
+    <html lang="zh-CN">
       <head>
         <meta charset="UTF-8" />
         <StyleSheet css={codiconCss + styles} />
@@ -52,7 +52,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
             x-bind:aria-selected="$store.app.activeTab === 'dashboard'"
             x-on:click="$store.app.setTab('dashboard')"
           >
-            Dashboard
+            仪表盘
           </button>
           <button
             type="button"
@@ -62,14 +62,14 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
             x-bind:aria-selected="$store.app.activeTab === 'config'"
             x-on:click="$store.app.setTab('config')"
           >
-            Config
+            服务配置
           </button>
         </div>
 
         {/* ── 仪表盘 ── */}
         <div x-show="$store.app.activeTab === 'dashboard'">
           <h3>
-            <span>Server</span>
+            <span>本地服务</span>
             <span
               class="hint"
               {...{ 'x-effect': '$el.textContent = \'v\' + ($store.app.state?.version || \'\')' }}
@@ -81,14 +81,17 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         </div>
 
         {/* ── 配置 ── */}
-        <div x-show="$store.app.activeTab === 'config'" x-cloak>
-          <h3>
-            <span>Providers</span>
-            <span class="h3-actions">
+        <div class="config-page" x-show="$store.app.activeTab === 'config'" x-cloak>
+          <header class="config-header">
+            <div>
+              <h2>服务商与模型</h2>
+              <p>管理接入地址、密钥和可用模型</p>
+            </div>
+            <div class="config-actions">
               <WebToolsButton />
-              <button class="tiny" x-on:click="$store.app.addProvider()">+ Add</button>
-            </span>
-          </h3>
+              <button type="button" x-on:click="$store.app.addProvider()">+ 添加服务商</button>
+            </div>
+          </header>
           <Providers />
         </div>
 
