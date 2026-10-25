@@ -2,7 +2,7 @@
 
 [English](README.md) · [整合与维护记录](docs/INTEGRATION.md) · [更新日志](CHANGELOG.md)
 
-基于 [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor)，整合 [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) 的增强和部分上游兼容修复。当前开发版本 **0.1.0**，维护仓库为 **zhanglinrun/CCursor**，并非原项目的官方发行版。
+基于 [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor)，整合 [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) 的增强和部分上游兼容修复。当前版本 **0.1.1**，维护仓库为 **zhanglinrun/CCursor**，并非原项目的官方发行版。
 
 ## 已整合内容
 
@@ -43,7 +43,7 @@ node installer/dist/cli.cjs check
 构建产物：
 
 - `installer/dist/cli.cjs` 和同目录的 `models-catalog.json`。
-- `installer/vsix/cursor2plus-0.1.0.vsix`。
+- `installer/vsix/cursor2plus-0.1.1.vsix`。
 
 保留 installer 目录结构，CLI 还需要本地依赖和旁边的 `vsix` 目录。
 
@@ -70,7 +70,7 @@ node installer/dist/cli.cjs uninstall
 
 仅拖入 VSIX 不会应用必要的 Cursor 程序补丁。面板里的更新按钮只替换扩展本体；涉及 `installer/src/` 的改动必须重新构建并运行 installer。每次升级 Cursor 后，也应重新预检并应用补丁。
 
-更新检查已指向 **zhanglinrun/CCursor**。本仓库尚未发布自己的 Release 时，请从源码构建。`npx @cometix/ccursor` 会安装上游版本，覆盖此分支的增强。
+更新检查指向 **zhanglinrun/CCursor**。已安装本分支时，可在 Cursor++ 面板点击“检查扩展更新”，下载最新正式 Release；更新后完全退出所有 Cursor 窗口再启动。[下载 v0.1.1](https://github.com/zhanglinrun/CCursor/releases/tag/v0.1.1)。`npx @cometix/ccursor` 会安装上游版本，覆盖此分支的增强。
 
 ## 自动压缩与模型目录
 
@@ -90,7 +90,7 @@ node installer/dist/cli.cjs uninstall
 - 从旧版本升级后，先关闭所有 Cursor 窗口一次，避免旧窗口继续占有 BYOK 服务。
 - SSH 验收需分别确认远端主机名/目录、远端独有文件的读取与修改、命令执行、取消请求和子代理访问；不能只测试聊天回复。
 
-维护步骤、来源边界与验证记录见 [INTEGRATION.md](docs/INTEGRATION.md)。本次整合只提交源码和本地构建，没有推送或公开发布。
+维护步骤、来源边界与验证记录见 [INTEGRATION.md](docs/INTEGRATION.md)。本分支通过 GitHub Release 分发 VSIX，不发布 npm 包。
 
 ## 署名与许可
 

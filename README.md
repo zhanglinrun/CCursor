@@ -2,7 +2,7 @@
 
 [中文](README_CN.md) · [Integration and maintenance](docs/INTEGRATION.md) · [Changelog](CHANGELOG.md)
 
-An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Development version: **0.1.0**. This is not an official CometixSpace or Yoahoug distribution.
+An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Current version: **0.1.1**. This is not an official CometixSpace or Yoahoug distribution.
 
 ## Included
 
@@ -37,7 +37,7 @@ Verification uses `Temp/tests` and synthetic test homes, not your normal BYOK co
 Build outputs:
 
 - `installer/dist/cli.cjs` and its sibling `models-catalog.json`.
-- `installer/vsix/cursor2plus-0.1.0.vsix`.
+- `installer/vsix/cursor2plus-0.1.1.vsix`.
 
 Keep the installer directory layout intact. The CLI requires its local dependencies and the sibling `vsix` directory.
 
@@ -60,7 +60,7 @@ node installer/dist/cli.cjs uninstall
 
 Dragging a VSIX into Cursor does not apply the required application patches. Panel updates replace the extension body only; changes under `installer/src/` require rebuilding and running the installer. After each Cursor update, rebuild if necessary and repeat `check` and installation/update.
 
-The update channel now points to **zhanglinrun/CCursor**. Until this fork publishes its own Release, build from source. `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
+The update channel points to **zhanglinrun/CCursor**. Existing installations can use **检查扩展更新** in the Cursor++ panel to download the latest stable Release; fully restart Cursor after updating. [Download v0.1.1](https://github.com/zhanglinrun/CCursor/releases/tag/v0.1.1). `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
 
 ## Context compaction and model catalog
 
@@ -80,7 +80,7 @@ The current branch passed a read-only patch preflight against **Windows Cursor 3
 - Before relying on a remote workspace, verify hostname/current directory, remote-only file read/edit, shell execution, cancellation and subagent file access.
 - The first upgrade from an old server owner requires closing every Cursor window once.
 
-See [the maintenance record](docs/INTEGRATION.md) for checks, source updates and rollback guidance. No release or npm package has been published as part of this integration.
+See [the maintenance record](docs/INTEGRATION.md) for checks, source updates and rollback guidance. GitHub Releases distribute this fork's VSIX; no npm package is published.
 
 ## Attribution and license
 
