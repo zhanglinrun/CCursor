@@ -7,7 +7,7 @@ import * as checkpoints from '../database/checkpoints'
 import { closeAgentDatabase, resetAgentDatabaseForTests } from '../database/sqlite'
 import { encodeBlob } from '../handlers/agent/blob'
 import { cacheBlob, resetBlobCacheForTests } from '../handlers/agent/blobStore'
-import { estimateMessagesTokens } from '../handlers/agent/compactionStrategy'
+import { estimateRequestTokens } from '../handlers/agent/compactionStrategy'
 import { performInlineAutoSummarize } from '../handlers/agent/conversationRuntime'
 import { parseRunRequest } from '../handlers/agent/protocol'
 import { resolveProviderRuntime } from '../handlers/llm'
@@ -48,7 +48,7 @@ function toolHistory(): LLMMessage[] {
   return messages
 }
 
-async function compact(messages: LLMMessage[], output: string | Error, usedTokens = 112000, contextTokenLimit = 128000) {
+async function compact(messages: LLMMessage[], output: string | Error, usedTokens = 112000, contextTokenLimit = 128000, stopReason = 'end_turn') {
   const allBlobIds = messages.map((message) => {
     const blob = encodeBlob(message)
     cacheBlob(blob.blobId, blob.blobData)
@@ -58,6 +58,7 @@ async function compact(messages: LLMMessage[], output: string | Error, usedToken
     if (output instanceof Error)
       throw output
     yield { type: 'text_delta' as const, text: output }
+    yield { type: 'done' as const, stopReason, usage: { inputTokens: 100, outputTokens: 20 } }
   })
   const commit = vi.spyOn(checkpoints, 'persistConversationCheckpoint')
   const parsed = parseRunRequest({
@@ -123,14 +124,14 @@ it('rejects a summary whose estimated size is exactly unchanged', async () => {
 
 it.each([128000, 500000])('calibrates token usage and preserves archives at a %i-token window', async (window) => {
   const messages = toolHistory()
-  const before = estimateMessagesTokens(messages)
+  const before = estimateRequestTokens(messages)
   const upstreamUsage = Math.round(before * 1.7)
   const run = await compact(messages, 'Synthetic summary of completed work.', upstreamUsage, window)
   expect(run.result).not.toBeNull()
   const result = run.result!
-  const after = estimateMessagesTokens(result.newMessages)
+  const after = estimateRequestTokens(result.newMessages)
   expect(result.newBlobIds.length).toBeLessThan(messages.length)
-  expect(result.newUsedTokens).toBe(Math.min(window, upstreamUsage, Math.round(after * upstreamUsage / before)))
+  expect(result.newUsedTokens).toBe(Math.min(window, Math.max(after, Math.min(upstreamUsage, Math.round(after * upstreamUsage / before)))))
   expect(result.newSummaryArchiveIds[0]).toBe('synthetic-archive')
   expect(run.commit).toHaveBeenCalledTimes(1)
   expect(eventTypes(run.events).filter(type => type === 'summaryStarted')).toHaveLength(1)
@@ -140,13 +141,27 @@ it.each([128000, 500000])('calibrates token usage and preserves archives at a %i
 it('uses the local estimate when no previous usage is available', async () => {
   const run = await compact(toolHistory(), 'Synthetic summary.', 0)
   expect(run.result).not.toBeNull()
-  expect(run.result!.newUsedTokens).toBe(estimateMessagesTokens(run.result!.newMessages))
+  expect(run.result!.newUsedTokens).toBe(estimateRequestTokens(run.result!.newMessages))
 })
 
-it('can commit a shrinking local fallback after a provider failure', async () => {
-  const run = await compact(toolHistory(), new Error('Synthetic provider failure'))
-  expect(run.result).not.toBeNull()
-  expect(run.result!.newBlobIds.length).toBeLessThan(toolHistory().length)
-  expect(run.commit).toHaveBeenCalledTimes(1)
+it('preserves history after a provider failure instead of committing a local fallback', async () => {
+  const messages = toolHistory()
+  const original = structuredClone(messages)
+  const run = await compact(messages, new Error('Synthetic provider failure'))
+  expect(run.result).toBeNull()
+  expect(run.commit).not.toHaveBeenCalled()
+  expect(messages).toEqual(original)
   expect(eventTypes(run.events).at(-1)).toBe('summaryCompleted')
+})
+
+it.each(['', '   '])('does not replace history with an empty model summary: %j', async (output) => {
+  const run = await compact(toolHistory(), output)
+  expect(run.result).toBeNull()
+  expect(run.commit).not.toHaveBeenCalled()
+})
+
+it('does not commit an output-limited summary', async () => {
+  const run = await compact(toolHistory(), 'Partial synthetic summary.', 112000, 128000, 'max_tokens')
+  expect(run.result).toBeNull()
+  expect(run.commit).not.toHaveBeenCalled()
 })

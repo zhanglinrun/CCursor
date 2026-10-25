@@ -1,17 +1,18 @@
-import type { LLMMessage } from '../llm/types'
+import type { LLMMessage, LLMTool } from '../llm/types'
 import type { HistoryEntry } from './historyManager'
 import { createHash } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { ConversationSummaryArchiveSchema } from '../../gen/agent_v1_pb'
 import { encodeBlob } from './blob'
-import { cacheBlob } from './blobStore'
+import { cacheBlob, getCachedBlob } from './blobStore'
 import {
   COMPACTION_LONG_BODY_KEEP_TAIL,
   COMPACTION_LONG_BODY_THRESHOLD,
   COMPACTION_MEDIUM_BODY_KEEP_TAIL,
   COMPACTION_MEDIUM_BODY_THRESHOLD,
 } from './constants'
-import { isPreambleUserMessage, isSummaryBlobMessage } from './historyManager'
+import { isPreambleUserMessage, isSummaryBlobMessage, materializeHistoryEntries } from './historyManager'
+import { countTokens } from './tokenCounter'
 
 export interface CompactionPlan {
   leading: HistoryEntry[]
@@ -24,6 +25,7 @@ export interface CompactionArtifacts {
   summaryBlobId: string
   summaryBlobData: string
   archiveBlobs: Array<{ blobId: string, blobData: string, blobDataRaw?: Uint8Array }>
+  historyBlobs: Array<{ blobId: string, blobData: string }>
   nextRootBlobIds: string[]
   nextSummaryArchiveIds: string[]
 }
@@ -95,7 +97,50 @@ export function estimateMessagesTokens(messages: Array<LLMMessage | { role: stri
   return messages.reduce((sum, message) => sum + estimateTextTokens(typeof message.content === 'string' ? message.content : formatMessageForSummary(message as LLMMessage)), 0)
 }
 
-export function planCompaction(entries: HistoryEntry[]): CompactionPlan {
+/** 请求估算不省略动态工具结果，且把工具定义与消息封装一同计入。 */
+export function estimateRequestTokens(messages: LLMMessage[], tools: LLMTool[] = []): number {
+  let imageTokens = 0
+  const serialized = JSON.stringify({ messages, ...(tools.length ? { tools } : {}) }, (_key, value) => {
+    if (value && typeof value === 'object' && value.type === 'image') {
+      imageTokens += 1600 // shortcut: 图像按固定保守值估算，实际 usage 可纠正；不是模型精确图像计费。
+      return { type: 'image', mimeType: value.mimeType }
+    }
+    return value
+  })
+  return countTokens(serialized) + imageTokens
+}
+
+/** PI 成功摘要覆盖整个旧窗口；只有正在继续的任务保留最近一条用户指令。 */
+export function planCheckpointCompaction(entries: HistoryEntry[], retainedUserTokens = 0): CompactionPlan {
+  const leading = planCompaction(entries).leading
+  const body = entries.slice(leading.length)
+  const latestUser = [...body].reverse().find(entry => entry.message.role === 'user'
+    && (typeof entry.message.content === 'string' || entry.message.content.some(block => block.type === 'text' || block.type === 'image')))
+  if (!latestUser || retainedUserTokens <= 0)
+    return { leading, summarizeEntries: body, keepTail: [] }
+  const message: LLMMessage = {
+    ...latestUser.message,
+    content: typeof latestUser.message.content === 'string' ? latestUser.message.content : latestUser.message.content.filter(block => block.type === 'text' || block.type === 'image'),
+  }
+  if (estimateRequestTokens([message]) > retainedUserTokens) {
+    const text = typeof message.content === 'string' ? message.content : message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
+    const marker = '\n[Latest instruction shortened for the retained window; full text included in the summary input.]'
+    let low = 0
+    let high = text.length
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2)
+      if (estimateRequestTokens([{ role: 'user', content: text.slice(0, middle) + marker }]) <= retainedUserTokens)
+        low = middle
+      else high = middle - 1
+    }
+    message.content = text.slice(0, low) + marker
+    if (estimateRequestTokens([message]) > retainedUserTokens)
+      return { leading, summarizeEntries: body, keepTail: [] }
+  }
+  return { leading, summarizeEntries: body, keepTail: materializeHistoryEntries([message]) }
+}
+
+export function planCompaction(entries: HistoryEntry[], minKeepTailCount = 0): CompactionPlan {
   const leading: HistoryEntry[] = []
   let index = 0
 
@@ -120,6 +165,9 @@ export function planCompaction(entries: HistoryEntry[]): CompactionPlan {
     keepTailCount = COMPACTION_MEDIUM_BODY_KEEP_TAIL
     summarizeCount = Math.max(0, body.length - keepTailCount)
   }
+
+  keepTailCount = Math.max(keepTailCount, minKeepTailCount)
+  summarizeCount = Math.max(0, body.length - keepTailCount)
 
   // tool 配对完整性: 确保切分点不在 tool call/result 之间。
   //
@@ -159,6 +207,7 @@ export function createCompactionArtifacts(params: {
   plan: CompactionPlan
   summaryText: string
   previousSummaryArchiveIds: string[]
+  knownBlobIds?: string[]
 }): CompactionArtifacts {
   const summaryBlob = encodeBlob({
     role: 'assistant',
@@ -187,11 +236,27 @@ export function createCompactionArtifacts(params: {
     nextSummaryArchiveIds = [...nextSummaryArchiveIds, archiveBlob.blobId]
   }
 
+  // 修复/重建历史会产生新引用，包含归档源；必须先发到客户端再提交 checkpoint。
+  const knownBlobIds = new Set(params.knownBlobIds)
+  const historyBlobs = [...new Set([
+    ...params.plan.leading,
+    ...params.plan.summarizeEntries,
+    ...params.plan.keepTail,
+  ].map(entry => entry.blobId))]
+    .filter(blobId => !knownBlobIds.has(blobId))
+    .map((blobId) => {
+      const blobData = getCachedBlob(blobId)
+      if (!blobData)
+        throw new Error('Compaction history blob is unavailable; history preserved.')
+      return { blobId, blobData }
+    })
+
   return {
     summaryText: params.summaryText,
     summaryBlobId: summaryBlob.blobId,
     summaryBlobData: summaryBlob.blobData,
     archiveBlobs,
+    historyBlobs,
     nextRootBlobIds: [
       ...params.plan.leading.map(entry => entry.blobId),
       summaryBlob.blobId,

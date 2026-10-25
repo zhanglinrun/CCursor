@@ -67,6 +67,8 @@ export class OpenAIChatProvider implements LLMProvider {
     const toolCalls = new Map<number, { id: string, name: string, args: string }>()
     let usage: { inputTokens: number, outputTokens: number, cacheReadTokens?: number } | null = null
     let sawToolCalls = false
+    let sawText = false
+    let finishReason: string | null = null
 
     for await (const chunk of stream) {
       if (chunk.usage) {
@@ -86,16 +88,16 @@ export class OpenAIChatProvider implements LLMProvider {
       }
 
       const choice = chunk.choices?.[0]
-      const delta = choice?.delta
-      if (!delta)
-        continue
+      if (choice?.finish_reason)
+        finishReason = choice.finish_reason
+      const delta = choice?.delta ?? {}
 
       if (typeof delta.content === 'string' && delta.content.length > 0) {
+        sawText ||= delta.content.trim().length > 0
         yield { type: 'text_delta', text: delta.content }
       }
 
       if (delta.tool_calls) {
-        sawToolCalls = true
         for (const tc of delta.tool_calls) {
           const existing = toolCalls.get(tc.index) ?? { id: '', name: '', args: '' }
           const next = {
@@ -108,6 +110,7 @@ export class OpenAIChatProvider implements LLMProvider {
           toolCalls.set(tc.index, next)
 
           if (shouldStart) {
+            sawToolCalls = true
             yield { type: 'tool_use_start', id: next.id, name: next.name }
           }
 
@@ -130,9 +133,16 @@ export class OpenAIChatProvider implements LLMProvider {
       }
     }
 
+    if (!sawText && !sawToolCalls) {
+      throw new Error(`OpenAI Chat returned an empty completion (finish_reason=${finishReason ?? 'missing'}). Check the relay response and context limit.`)
+    }
+    if (!finishReason) {
+      throw new Error('OpenAI Chat stream was interrupted before a completion finish marker; incomplete response discarded.')
+    }
+
     yield {
       type: 'done',
-      stopReason: sawToolCalls ? 'tool_use' : 'end_turn',
+      stopReason: finishReason === 'length' ? 'max_tokens' : sawToolCalls ? 'tool_use' : finishReason === 'stop' ? 'end_turn' : finishReason,
       usage: usage ?? { inputTokens: 0, outputTokens: 0 },
     }
   }

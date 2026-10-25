@@ -4,14 +4,16 @@ import type { AgentSession } from './session'
 import { randomUUID } from 'node:crypto'
 import { persistConversationCheckpoint } from '../../database/checkpoints'
 import { logger } from '../../logger'
+import { makeProviderError } from '../errors'
 import { resolveProviderRuntime } from '../llm'
-import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
+import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCheckpointCompaction } from './compactionStrategy'
 import { hydrateHistoryEntries, repairHistoryEntries } from './historyManager'
 import { executePreCompactHook } from './hookRuntime'
 import { workspaceUris } from './protocol'
-import { checkpoint, heartbeat, kvMessage, summary, summaryCompleted, summaryStarted } from './stream'
-import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
+import { checkpoint, heartbeat, kvMessage, summaryCompleted, summaryStarted } from './stream'
+import { generateModelSummary } from './summaryRequest'
 import { clampTokenDetails, computeContextUsagePercent } from './usage'
+import { isAgentRunAbortedError, throwIfSessionCancelled } from './wait'
 
 export async function* handleSummarizeAction(
   parsed: ParsedRunRequest,
@@ -21,7 +23,7 @@ export async function* handleSummarizeAction(
   const hydratedHistoryEntries = hydrateHistoryEntries(parsed.historyBlobIds)
   const missingHistoryBlobs = Math.max(0, parsed.historyBlobIds.length - hydratedHistoryEntries.length)
   const historyEntries = repairHistoryEntries(hydratedHistoryEntries)
-  const compactionPlan = planCompaction(historyEntries)
+  const compactionPlan = planCheckpointCompaction(historyEntries)
   const currentTokenDetails = clampTokenDetails(
     parsed.historyTokenDetails?.usedTokens ?? estimateMessagesTokens(historyEntries.map(entry => entry.message)),
     parsed.historyTokenDetails?.maxTokens ?? parsed.contextTokenLimit ?? route.contextTokenLimit,
@@ -144,32 +146,18 @@ export async function* handleSummarizeAction(
     keepTail: compactionPlan.keepTail.length,
   }, '[SUMMARIZE] LLM summary starting')
 
-  let lastHeartbeatTime = Date.now()
   try {
-    const llmStream = route.provider.stream({
-      model: route.model,
-      thinking: false,
-      messages: [
-        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-        { role: 'user', content: buildSummaryUserMessage(summarySourceText) },
-      ],
-    })
-
-    for await (const event of llmStream) {
-      if (event.type === 'text_delta') {
-        summaryText += event.text
-        yield summary(event.text)
-      }
-      // LLM 生成期间持续 yield heartbeat, 防止客户端 stall detector 误判
-      if (Date.now() - lastHeartbeatTime >= 4000) {
-        yield heartbeat()
-        lastHeartbeatTime = Date.now()
-      }
-    }
+    summaryText = yield* generateModelSummary({ source: summarySourceText, route, parsed, contextTokenLimit: currentTokenDetails.maxTokens, session })
   }
   catch (error) {
-    logger.warn({ error: (error as Error).message, durationMs: Date.now() - llmStartTime }, '[SUMMARIZE] LLM failed, falling back to local summary')
+    if (isAgentRunAbortedError(error))
+      throw error
+    logger.warn({ error: (error as Error).message, durationMs: Date.now() - llmStartTime }, '[SUMMARIZE] LLM failed; preserving history')
+    yield summaryCompleted('Compaction failed; conversation history preserved.')
+    throw makeProviderError(error, { operation: 'summarize', modelId: parsed.modelId })
   }
+  if (session)
+    throwIfSessionCancelled(session)
 
   logger.info({
     conversationId: parsed.conversationId,
@@ -177,30 +165,19 @@ export async function* handleSummarizeAction(
     durationMs: Date.now() - llmStartTime,
   }, '[SUMMARIZE] LLM summary done')
 
-  summaryText = summaryText.trim()
-  if (!summaryText) {
-    summaryText = summarySourceText
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .slice(0, 12)
-      .map(line => `- ${line.replace(/^-\s*/, '')}`)
-      .join('\n')
-      .slice(0, 4000)
-  }
-  if (!summaryText) {
-    summaryText = '- Prior conversation compacted.'
-  }
-
   const artifacts = createCompactionArtifacts({
     plan: compactionPlan,
     summaryText,
     previousSummaryArchiveIds: parsed.historySummaryArchiveIds,
+    knownBlobIds: parsed.historyBlobIds,
   })
 
-  yield kvMessage(1, artifacts.summaryBlobId, artifacts.summaryBlobData)
-  for (const [index, archiveBlob] of artifacts.archiveBlobs.entries()) {
-    yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
+  let summaryBlobCounter = 0
+  for (const historyBlob of artifacts.historyBlobs)
+    yield kvMessage(++summaryBlobCounter, historyBlob.blobId, historyBlob.blobData)
+  yield kvMessage(++summaryBlobCounter, artifacts.summaryBlobId, artifacts.summaryBlobData)
+  for (const archiveBlob of artifacts.archiveBlobs) {
+    yield kvMessage(++summaryBlobCounter, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
   }
 
   const compactedUsedTokens = clampTokenDetails(
@@ -212,6 +189,8 @@ export async function* handleSummarizeAction(
     currentTokenDetails.maxTokens,
   )
 
+  if (session)
+    throwIfSessionCancelled(session)
   persistConversationCheckpoint({
     kind: 'committed',
     conversationId: parsed.conversationId,

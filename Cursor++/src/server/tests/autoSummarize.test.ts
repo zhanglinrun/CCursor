@@ -7,9 +7,9 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { resetAgentDatabaseForTests } from '../database/sqlite'
 import { encodeBlob } from '../handlers/agent/blob'
 import { cacheBlob, resetBlobCacheForTests } from '../handlers/agent/blobStore'
-import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from '../handlers/agent/compactionStrategy'
+import { createCompactionArtifacts, estimateMessagesTokens, estimateRequestTokens, formatMessageForSummary, planCheckpointCompaction, planCompaction } from '../handlers/agent/compactionStrategy'
 import { hydrateHistoryEntries, isSummaryBlobMessage } from '../handlers/agent/historyManager'
-import { clampTokenDetails, computeContextUsagePercent, getAutoCompactThreshold, shouldTriggerCompaction } from '../handlers/agent/usage'
+import { capRequestOutput, clampTokenDetails, computeContextUsagePercent, getAutoCompactThreshold, getContextBudgetLimits, shouldTriggerCompaction } from '../handlers/agent/usage'
 
 // ─── helpers ───
 
@@ -78,20 +78,41 @@ it('shouldTriggerCompaction returns true at/above threshold', () => {
   expect(shouldTriggerCompaction(100000, 100000, 85)).toBe(true)
 })
 
-it('shouldTriggerCompaction default uses absolute buffer threshold', () => {
-  // 绝对 buffer 模式 (对齐 Claude Code):
-  //   threshold = maxTokens - min(maxOutputTokens, 20K outputReserve) - 20K buffer
-  // 默认 maxOutputTokens=8192 → 100K 模型 threshold = 100000 - 8192 - 20000 = 71808
-  expect(getAutoCompactThreshold(100000)).toBe(71808)
-  expect(shouldTriggerCompaction(71807, 100000)).toBe(false)
-  expect(shouldTriggerCompaction(71808, 100000)).toBe(true)
+it.each([
+  [128000, 8192, 16384, 111616, 100454],
+  [200000, 32000, 32000, 168000, 151200],
+  [1000000, 32000, 50000, 950000, 855000],
+  [1000000, 64000, 64000, 936000, 842400],
+])('matches PI budget at window=%i output=%i', (window, output, headroom, hardLimit, threshold) => {
+  expect(getContextBudgetLimits(window, output)).toMatchObject({ requestHeadroom: headroom, hardLimit, autoCompactThreshold: threshold })
+  expect(getAutoCompactThreshold(window, output)).toBe(threshold)
+  expect(shouldTriggerCompaction(threshold - 1, window, undefined, output)).toBe(false)
+  expect(shouldTriggerCompaction(threshold, window, undefined, output)).toBe(true)
 })
 
-it('getAutoCompactThreshold caps output reserve at 20K', () => {
-  // maxOutputTokens 超过 20K 时按 20K 计 — 200K 模型 threshold=160K (~80%, 基准)
-  expect(getAutoCompactThreshold(200000, 64000)).toBe(160000)
-  // 1M 模型 threshold=960K (~96%)
-  expect(getAutoCompactThreshold(1000000, 32000)).toBe(960000)
+it('keeps invalid and tiny window budgets finite and positive', () => {
+  for (const window of [1, 100, 8000, 32000, 128000, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const budget = getContextBudgetLimits(window, Number.NaN)
+    expect(budget.hardLimit).toBeGreaterThan(0)
+    expect(budget.autoCompactThreshold).toBeGreaterThan(0)
+    expect(budget.autoCompactThreshold).toBeLessThanOrEqual(budget.hardLimit)
+    expect(Number.isFinite(budget.hardLimit)).toBe(true)
+  }
+})
+
+it('counts dynamic tool results and tool schemas in request pressure', () => {
+  const message: LLMMessage = { role: 'tool', toolName: 'GetDynamicTools', content: 'schema '.repeat(3000) }
+  expect(estimateRequestTokens([message])).toBeGreaterThan(estimateRequestTokens([{ ...message, content: 'schema' }]) + 2000)
+  expect(estimateRequestTokens([], [{ name: 'Synthetic', description: 'tool '.repeat(100), inputSchema: {} }])).toBeGreaterThan(estimateRequestTokens([]))
+})
+
+it('summarizes assistant/tool content and retains only the latest active user message', () => {
+  const entries = makeHistoryEntries(10, { withSystem: true, withPreamble: true })
+  const active = planCheckpointCompaction(entries, 20000)
+  expect(active.leading).toHaveLength(2)
+  expect(active.summarizeEntries).toEqual(entries.slice(2))
+  expect(active.keepTail.map(entry => entry.message)).toEqual([entries.at(-2)!.message])
+  expect(planCheckpointCompaction(entries).keepTail).toEqual([])
 })
 
 // ─── clampTokenDetails tests ───
@@ -123,6 +144,13 @@ it('computeContextUsagePercent computes correctly', () => {
 })
 
 // ─── planCompaction tests ───
+
+it('keeps the newest unprocessed message when preflight requests a retained tail', () => {
+  const entries = makeHistoryEntries(1, { withSystem: true, withPreamble: true })
+  const plan = planCompaction(entries, 1)
+  expect(plan.summarizeEntries).toHaveLength(0)
+  expect(plan.keepTail).toEqual(entries.slice(-1))
+})
 
 it('planCompaction preserves system and preamble in leading', () => {
   const entries = makeHistoryEntries(10, { withSystem: true, withPreamble: true })
@@ -322,4 +350,12 @@ it('end-to-end: shouldTriggerCompaction integrates with token estimation', () =>
   if (estimate >= contextLimit * 0.85) {
     expect(shouldCompact, 'should trigger compaction when over 85%').toBe(true)
   }
+})
+
+it('caps explicit output and thinking budgets without overriding omitted output settings', () => {
+  const base = { model: 'synthetic', messages: [], maxTokens: 64000, thinking: true, thinkingBudgetTokens: 30000 }
+  expect(capRequestOutput(base, 100000, 80000)).toMatchObject({ maxTokens: 20000, thinkingBudgetTokens: 19999 })
+  expect(capRequestOutput(base, 100000, 99000)).toMatchObject({ maxTokens: 1000, thinking: false, thinkingBudgetTokens: undefined })
+  const omitted = { ...base, maxTokens: undefined }
+  expect(capRequestOutput(omitted, 100000, 80000)).toBe(omitted)
 })

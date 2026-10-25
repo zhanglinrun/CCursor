@@ -9,30 +9,31 @@ import type { ToolCallInfo } from './tools'
 import { normalizeUsage } from '../../../shared/usageTypes'
 import { clearDraftCheckpoint, persistConversationCheckpoint } from '../../database/checkpoints'
 import { SimulatedMsgReason } from '../../gen/agent_v1_pb'
+import { ErrorDetails_Error } from '../../gen/aiserver_v1_shared_pb'
 import { logger } from '../../logger'
 import { recordUsage } from '../../stats/usageStore'
-import { makeProviderError, makeToolError } from '../errors'
+import { makeByokConnectError, makeProviderError, makeToolError } from '../errors'
 import { resolveProviderRuntime } from '../llm'
 import { createRepairDiagnostics, hasRepairMutations, repairConversationHistory } from '../llm/transformMessages'
 import { decodeBlob } from './blob'
 import { cacheBlob, getCachedBlob } from './blobStore'
 import { emitFinalCheckpoint, emitRollingCheckpoint } from './checkpointManager'
-import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
+import { createCompactionArtifacts, estimateMessagesTokens, estimateRequestTokens, formatMessageForSummary, planCheckpointCompaction } from './compactionStrategy'
 import { buildContextBreakdown } from './contextBreakdown'
 import { contextualizeDynamicMetaTools, partitionCursorBuiltinTools, shouldEnableBuiltinDynamicProfile } from './dynamicTools'
 import { editNewlineStats, editToolTargetStats } from './editStreamDiagnostics'
 import { EditDeltaExtractor, normalizeDetectedEditPath } from './editStreamExtractor'
-import { flushMessageBlobs, hydrateHistoryEntries, isSummaryBlobMessage, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
+import { flushMessageBlobs, hydrateHistoryEntries, isSummaryBlobMessage, materializeHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
 import { buildMessages, workspaceUris } from './protocol'
 import { isSessionCancelled } from './session'
-import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
+import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { contextualizeSubagentTools } from './subagentCatalog'
-import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
+import { generateModelSummary } from './summaryRequest'
 import { finalizeTaskResult, launchTaskTool, runToolCall } from './toolRuntime'
 import { resolveExecutionToolName } from './tools'
 import { restoreBlobMessageToLLMMessage } from './transcript'
 import { ActiveTurnTracker, createCurrentTurnUserMessageBlob, readTurnBaseline } from './turnTracker'
-import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, getAutoCompactThreshold, shouldTriggerCompaction } from './usage'
+import { addUsage, capRequestOutput, clampTokenDetails, emptyUsageTotals, estimateContextTokens, getContextBudgetLimits } from './usage'
 import { awaitExecResultAndClose, isAgentRunAbortedError, throwIfSessionCancelled, waitForPromiseWithHeartbeat } from './wait'
 
 /**
@@ -43,8 +44,6 @@ import { awaitExecResultAndClose, isAgentRunAbortedError, throwIfSessionCancelle
  */
 export { type BreakdownCategory, buildContextBreakdown } from './contextBreakdown'
 export { detectEditPathFromToolInput, EditDeltaExtractor, normalizeDetectedEditPath } from './editStreamExtractor'
-
-const LEADING_DASH_RE = /^-\s*/
 
 const EDIT_TOOL_NAMES = new Set(['ApplyPatch', 'Edit', 'Write', 'EditNotebook'])
 
@@ -85,10 +84,6 @@ function extractCompletedToolCall(frame: AgentServerMessage) {
 const editExtractors = new Map<string, EditDeltaExtractor>()
 const editPathSent = new Set<string>()
 const editStreamDiagnostics = new Map<string, EditStreamDiagnostics>()
-
-// Auto-summarize 阈值: 不再用百分比，改为绝对 buffer 模式 (对齐 Claude Code):
-//   threshold = (contextTokenLimit - 20K outputReserve) - 13K buffer
-// 效果: 200K 模型 ~83.5% 触发, 1M 模型 ~96.7% 触发
 
 function flushPendingAssistantPrefix(params: {
   roundAssistantBlocks: LLMContentBlock[]
@@ -139,6 +134,9 @@ export async function* performInlineAutoSummarize(params: {
   messages: LLMMessage[]
   route: ReturnType<typeof resolveProviderRuntime>
   readPaths: string[]
+  minKeepTailCount?: number
+  turnBlobIds?: string[]
+  session?: AgentSession | null
 }): AsyncGenerator<AgentServerMessage, {
   newBlobIds: string[]
   newSummaryArchiveIds: string[]
@@ -147,11 +145,17 @@ export async function* performInlineAutoSummarize(params: {
 } | null> {
   const { parsed, allBlobIds, summaryArchiveIds, usedTokensEstimate, contextTokenLimit, route } = params
 
-  const historyEntries = repairHistoryEntries(hydrateHistoryEntries(allBlobIds))
+  const hydratedHistory = hydrateHistoryEntries(allBlobIds)
+  if (hydratedHistory.length !== allBlobIds.length) {
+    logger.warn({ conversationId: parsed.conversationId }, '[AGENT] auto-summarize: incomplete history; preserving history')
+    return null
+  }
+  const historyEntries = repairHistoryEntries(materializeHistoryEntries(params.messages))
   if (historyEntries.length === 0)
     return null
 
-  const compactionPlan = planCompaction(historyEntries)
+  const budget = getContextBudgetLimits(contextTokenLimit, route.maxOutputTokens)
+  const compactionPlan = planCheckpointCompaction(historyEntries, params.minKeepTailCount ? budget.retainedUserTokens : 0)
   // 规范化历史可能丢失 isSummary 元数据，兼容已有摘要的固定前缀。
   if (compactionPlan.summarizeEntries.length === 0
     || compactionPlan.summarizeEntries.every(entry => isSummaryBlobMessage(entry.raw)
@@ -181,40 +185,18 @@ export async function* performInlineAutoSummarize(params: {
 
   let summaryText = ''
   try {
-    const llmStream = route.provider.stream({
-      model: route.model,
-      thinking: false,
-      messages: [
-        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-        { role: 'user', content: buildSummaryUserMessage(summarySourceText) },
-      ],
-    })
-
-    for await (const event of llmStream) {
-      if (event.type === 'text_delta') {
-        summaryText += event.text
-        yield summary(event.text)
-      }
-    }
+    summaryText = yield* generateModelSummary({ source: summarySourceText, route, parsed, contextTokenLimit, session: params.session })
   }
   catch (error) {
-    logger.warn({ error: (error as Error).message }, '[AGENT] auto-summarize: LLM failed, using local fallback')
+    if (isAgentRunAbortedError(error))
+      throw error
+    logger.warn({ error: (error as Error).message }, '[AGENT] auto-summarize: LLM failed; preserving history')
+    yield summaryCompleted('Compaction failed; conversation history preserved.')
+    return null
   }
 
-  summaryText = summaryText.trim()
-  if (!summaryText) {
-    summaryText = summarySourceText
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .slice(0, 12)
-      .map(line => `- ${line.replace(LEADING_DASH_RE, '')}`)
-      .join('\n')
-      .slice(0, 4000)
-  }
-  if (!summaryText) {
-    summaryText = '- Prior conversation compacted.'
-  }
+  if (params.session)
+    throwIfSessionCancelled(params.session)
 
   const previousTokenEstimate = estimateMessagesTokens(historyEntries.map(entry => entry.message))
   const compactedTokenEstimate = estimateMessagesTokens([
@@ -236,22 +218,32 @@ export async function* performInlineAutoSummarize(params: {
     plan: compactionPlan,
     summaryText,
     previousSummaryArchiveIds: summaryArchiveIds,
+    knownBlobIds: allBlobIds,
   })
 
-  yield kvMessage(1, artifacts.summaryBlobId, artifacts.summaryBlobData)
-  for (const [index, archiveBlob] of artifacts.archiveBlobs.entries()) {
-    yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
+  let summaryBlobCounter = 0
+  for (const historyBlob of artifacts.historyBlobs)
+    yield kvMessage(++summaryBlobCounter, historyBlob.blobId, historyBlob.blobData)
+  yield kvMessage(++summaryBlobCounter, artifacts.summaryBlobId, artifacts.summaryBlobData)
+  for (const archiveBlob of artifacts.archiveBlobs) {
+    yield kvMessage(++summaryBlobCounter, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
   }
 
-  // 沿用压缩前 usage 与本地估算的比例，避免压缩后切换计数口径。
+  const previousRequestEstimate = estimateRequestTokens(params.messages)
+  const compactedRequestEstimate = estimateRequestTokens([
+    ...compactionPlan.leading.map(entry => entry.message),
+    { role: 'assistant', content: `Previous conversation summary:\n${summaryText}` },
+    ...compactionPlan.keepTail.map(entry => entry.message),
+  ])
   const compactedTokenDetails = clampTokenDetails(
-    usedTokensEstimate > 0
-      ? Math.min(usedTokensEstimate, Math.round(compactedTokenEstimate * usedTokensEstimate / Math.max(1, previousTokenEstimate)))
-      : compactedTokenEstimate,
+    Math.max(compactedRequestEstimate, Math.min(usedTokensEstimate, Math.round(compactedRequestEstimate * usedTokensEstimate / Math.max(1, previousRequestEstimate)))),
     contextTokenLimit,
   )
 
-  persistConversationCheckpoint({ kind: 'committed', conversationId: parsed.conversationId, rootBlobIds: artifacts.nextRootBlobIds, turnBlobIds: parsed.historyTurnBlobIds, summaryArchiveIds: artifacts.nextSummaryArchiveIds, tokenDetails: compactedTokenDetails, mode: parsed.mode, updatedAt: Date.now() })
+  if (params.session)
+    throwIfSessionCancelled(params.session)
+  const currentTurnBlobIds = params.turnBlobIds ?? parsed.historyTurnBlobIds
+  persistConversationCheckpoint({ kind: 'committed', conversationId: parsed.conversationId, rootBlobIds: artifacts.nextRootBlobIds, turnBlobIds: currentTurnBlobIds, summaryArchiveIds: artifacts.nextSummaryArchiveIds, tokenDetails: compactedTokenDetails, mode: parsed.mode, updatedAt: Date.now() })
 
   yield checkpoint(
     artifacts.nextRootBlobIds,
@@ -260,7 +252,7 @@ export async function* performInlineAutoSummarize(params: {
     parsed.mode,
     undefined,
     {
-      turnBlobIds: parsed.historyTurnBlobIds,
+      turnBlobIds: currentTurnBlobIds,
       summaryArchiveIds: artifacts.nextSummaryArchiveIds,
       workspaceUris: workspaceUris(parsed),
       readPaths: params.readPaths,
@@ -503,10 +495,6 @@ export async function* handleConversationRun(
   let turnBlobIds = [...parsed.historyTurnBlobIds]
   let messages: LLMMessage[] = []
   let currentSummaryArchiveIds = [...parsed.historySummaryArchiveIds]
-  // 连续失败熔断 (对齐 Claude Code MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES=3)
-  // 不再用 autoSummarizePerformed 一次性限制——每轮都可重复触发,直至连续失败 3 次停止
-  let autoCompactConsecutiveFailures = 0
-  const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
   const syntheticUserMessageId = parsed.isBackgroundTaskCompletion
     ? `background-completion-${Date.now()}`
     : parsed.rawUserMessage?.messageId && typeof parsed.rawUserMessage.messageId === 'string'
@@ -611,6 +599,7 @@ export async function* handleConversationRun(
     parsed.historyTokenDetails?.usedTokens ?? 0,
     estimateMessagesTokens(messages),
   )
+  let requestTokenRatio = 1
   let lastAssistantContent: LLMContentBlock[] | undefined
   let stepCounter = 0
 
@@ -624,6 +613,54 @@ export async function* handleConversationRun(
         reason: session.cancelledReason,
       }, '[CANCEL] run cancelled at round boundary')
       return
+    }
+
+    const llmVisibleMcpTools = parsed.mcpMetaTool?.enabled ? [] : parsed.mcpTools
+    const requestTools = route.listRuntimeTools(llmVisibleMcpTools, parsed.mode, parsed.isSubagent, disabledToolsForRun, runtimeBuiltinTools)
+    const budget = getContextBudgetLimits(contextTokenLimit, route.maxOutputTokens)
+    // 新消息和工具结果均在请求前计入，包含系统提示、动态 schema 和工具定义。
+    usedTokensEstimate = Math.max(usedTokensEstimate, Math.ceil(estimateRequestTokens(messages, requestTools) * requestTokenRatio))
+    if (usedTokensEstimate >= budget.autoCompactThreshold) {
+      logger.info({ conversationId: parsed.conversationId, round, usedTokensEstimate, contextTokenLimit, ...budget }, '[AGENT] auto-summarize: preflight threshold exceeded')
+      const currentTurnBlob = activeTurn?.materializeTurnBlob()
+      if (currentTurnBlob)
+        yield cacheAndBuildKvBlob(++blobCounter, currentTurnBlob)
+      const compactionResult = yield* performInlineAutoSummarize({
+        parsed,
+        allBlobIds: [...parsed.historyBlobIds, ...blobIds],
+        summaryArchiveIds: currentSummaryArchiveIds,
+        usedTokensEstimate,
+        contextTokenLimit,
+        messages,
+        route,
+        readPaths: [...readContext.readPaths],
+        minKeepTailCount: 1,
+        turnBlobIds: currentTurnBlob ? [...turnBlobIds, currentTurnBlob.blobId] : turnBlobIds,
+        session,
+      })
+      if (compactionResult) {
+        messages = compactionResult.newMessages
+        parsed.historyBlobIds = compactionResult.newBlobIds
+        currentSummaryArchiveIds = compactionResult.newSummaryArchiveIds
+        usedTokensEstimate = Math.max(compactionResult.newUsedTokens, Math.ceil(estimateRequestTokens(messages, requestTools) * requestTokenRatio))
+        blobIds = []
+        blobCounter = 0
+        nextBlobbedMessageIndex = messages.length
+        breakdownCategories = undefined
+      }
+      else {
+        logger.warn({ usedTokensEstimate, hardLimit: budget.hardLimit }, '[AGENT] compaction failed; history preserved, continuing only below hard limit')
+      }
+      if (session)
+        throwIfSessionCancelled(session)
+    }
+    if (usedTokensEstimate >= budget.hardLimit) {
+      throw makeByokConnectError({
+        errorCode: ErrorDetails_Error.CUSTOM,
+        title: 'Context compaction failed: context still too large',
+        detail: 'The context is at or above the safe request budget. No ordinary model request was sent. Check the relay/context configuration or start a new conversation.',
+        isRetryable: false,
+      })
     }
 
     const pendingToolCalls: ToolCallInfo[] = []
@@ -640,12 +677,17 @@ export async function* handleConversationRun(
       // 这两张表此前是同一张,legacy 模式下恰好重合所以没暴露问题;meta 模式下
       // 客户端只发 slim 名单(仅 toolName,无 inputSchema),摊平下发等于给 LLM
       // 一堆没有参数说明的工具。见 analysis/mcp-dynamic-tools.md。
-      const llmVisibleMcpTools = parsed.mcpMetaTool?.enabled ? [] : parsed.mcpTools
       const preparedRequest = route.prepareStreamRequest(messages, llmVisibleMcpTools, undefined, parsed.mode, {
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
       }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined, contextTokenLimit, runtimeBuiltinTools)
+      const localRequestTokens = estimateRequestTokens(preparedRequest.request.messages, preparedRequest.request.tools)
+      usedTokensEstimate = Math.max(usedTokensEstimate, Math.ceil(localRequestTokens * requestTokenRatio))
+      if (usedTokensEstimate >= budget.hardLimit) {
+        throw makeByokConnectError({ errorCode: ErrorDetails_Error.CUSTOM, title: 'Context exceeds safe request budget', detail: 'The prepared provider request exceeds the hard context limit. No ordinary model request was sent.', isRetryable: false })
+      }
+      preparedRequest.request = capRequestOutput(preparedRequest.request, contextTokenLimit, usedTokensEstimate)
 
       if (!breakdownCategories) {
         breakdownCategories = buildContextBreakdown({
@@ -808,7 +850,8 @@ export async function* handleConversationRun(
               currentText,
             }))
             Object.assign(usageTotals, addUsage(usageTotals, event.usage))
-            usedTokensEstimate = Math.max(usedTokensEstimate, estimateContextTokens(event.usage))
+            usedTokensEstimate = Math.max(usedTokensEstimate, estimateContextTokens({ inputTokens: normalizeUsage(route.providerType, event.usage).promptTokens, outputTokens: event.usage.outputTokens }))
+            requestTokenRatio = Math.max(1, normalizeUsage(route.providerType, event.usage).promptTokens / Math.max(1, localRequestTokens))
             // 用量统计落盘。逐协议归一化后再写 —— 四种协议的 inputTokens 口径不同，
             // 原样记录会让缓存命中率跨协议不可比（见 shared/usageTypes.ts）。
             // route.model 是 apiModel（发给端点的真实模型名），不是 UI 上的显示名，
@@ -1038,59 +1081,6 @@ export async function* handleConversationRun(
         gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
         breakdownCategories,
       })
-
-      // 链路①: 服务端 Agent Run 内自动 summarize
-      // 每轮都检查——超阈值就触发 compaction,可重复触发,连续失败 3 次才熔断
-      // (对齐 Claude Code autoCompactIfNeeded 的 consecutiveFailures 熔断机制)
-      if (autoCompactConsecutiveFailures < MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
-        && shouldTriggerCompaction(usedTokensEstimate, contextTokenLimit)) {
-        logger.info({
-          conversationId: parsed.conversationId,
-          round,
-          usedTokensEstimate,
-          contextTokenLimit,
-          threshold: getAutoCompactThreshold(contextTokenLimit),
-          consecutiveFailures: autoCompactConsecutiveFailures,
-        }, '[AGENT] auto-summarize: threshold exceeded, triggering inline compaction')
-
-        const compactionResult = yield* performInlineAutoSummarize({
-          parsed,
-          allBlobIds: allBlobIdsForCheckpoint,
-          summaryArchiveIds: currentSummaryArchiveIds,
-          usedTokensEstimate,
-          contextTokenLimit,
-          messages,
-          route,
-          readPaths: [...readContext.readPaths],
-        })
-
-        if (compactionResult) {
-          // 用 compacted 后的状态替换当前状态，继续后续 round
-          messages = compactionResult.newMessages
-          parsed.historyBlobIds = compactionResult.newBlobIds
-          currentSummaryArchiveIds = compactionResult.newSummaryArchiveIds
-          usedTokensEstimate = compactionResult.newUsedTokens
-          // 重置 blob 追踪：compaction 后 blobIds 都已合并到 parsed.historyBlobIds
-          blobIds = []
-          blobCounter = 0
-          nextBlobbedMessageIndex = messages.length
-          autoCompactConsecutiveFailures = 0 // 成功后重置
-
-          logger.info({
-            conversationId: parsed.conversationId,
-            newMessageCount: messages.length,
-            newUsedTokens: usedTokensEstimate,
-          }, '[AGENT] auto-summarize: state replaced, continuing agent loop')
-        }
-        else {
-          autoCompactConsecutiveFailures++
-          logger.warn({
-            conversationId: parsed.conversationId,
-            consecutiveFailures: autoCompactConsecutiveFailures,
-            maxFailures: MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
-          }, '[AGENT] auto-summarize: compaction failed, incrementing failure counter')
-        }
-      }
     }
     catch (e) {
       if (isAgentRunAbortedError(e)) {

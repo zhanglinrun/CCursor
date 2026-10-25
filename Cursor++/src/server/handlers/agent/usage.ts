@@ -1,4 +1,4 @@
-import type { LLMUsage } from '../llm/types'
+import type { LLMStreamRequest, LLMUsage } from '../llm/types'
 
 export interface UsageTotals {
   inputTokens: number
@@ -49,36 +49,47 @@ export function computeContextUsagePercent(usedTokens: number, maxTokens: number
   return Number(((safeUsed / safeMax) * 100).toFixed(2))
 }
 
-/**
- * 自动压缩触发判定 — 绝对 buffer 模式
- *
- * 参考 Claude Code (buffer=13K, outputReserve=20K) 但为 Cursor IDE 场景加大预留:
- *
- * Cursor Agent 每轮有 IDE 专属固定开销——system prompt + preamble (~15K),
- * 注册工具 schema (~10K), rules/skills/MCP instructions (~5K),
- * exec 通道封装 + blob 元数据开销。比 CLI 环境多 ~20-30K。
- *
- *   effectiveWindow = maxTokens - outputReserve(20K)
- *   threshold = effectiveWindow - bufferTokens(20K)
- *
- * 以 200K 模型 80% 触发为基准测算:
- *   128K 模型: threshold=88K  → ~69%, 留 40K 余量
- *   200K 模型: threshold=160K → ~80%, 留 40K 余量 ← 基准
- *   1M 模型:  threshold=960K → 96%, 留 40K 余量
- * 40K ≈ 2 轮 Agent tool 调用余量 (system 15K + tool result 15K + output 8K)
- */
-const AUTOCOMPACT_BUFFER_TOKENS = 20_000
-const MAX_OUTPUT_RESERVE = 20_000
-
-export function getAutoCompactThreshold(maxTokens: number, maxOutputTokens = 8192): number {
-  const outputReserve = Math.min(maxOutputTokens, MAX_OUTPUT_RESERVE)
-  const effective = maxTokens - outputReserve
-  return effective - AUTOCOMPACT_BUFFER_TOKENS
+export interface ContextBudgetLimits {
+  requestHeadroom: number
+  hardLimit: number
+  autoCompactThreshold: number
+  retainedUserTokens: number
 }
 
-export function shouldTriggerCompaction(usedTokens: number, maxTokens: number, thresholdPercent?: number): boolean {
-  if (thresholdPercent !== undefined) {
-    return computeContextUsagePercent(usedTokens, maxTokens) >= thresholdPercent
+/** PI-Desktop context-budget.ts (7a95fd0): 先扣输出/提示预留，再以安全预算的 90% 提前压缩。 */
+export function getContextBudgetLimits(maxTokens: number, maxOutputTokens = 8192): ContextBudgetLimits {
+  const window = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.max(1, Math.round(maxTokens)) : 128000
+  const output = Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? Math.round(maxOutputTokens) : 8192
+  const outputReserve = Math.min(Math.max(1, output), Math.max(1, Math.floor(window * 0.25)))
+  const reserveFloor = Math.min(16384, Math.max(1, Math.floor(window * 0.5)))
+  const requestHeadroom = Math.min(window - 1, Math.max(reserveFloor, outputReserve, Math.ceil(window * 0.05)))
+  const hardLimit = Math.max(1, window - requestHeadroom)
+  return {
+    requestHeadroom,
+    hardLimit,
+    autoCompactThreshold: Math.max(1, Math.floor(hardLimit * 0.9)),
+    retainedUserTokens: Math.max(1, Math.min(20000, Math.floor(hardLimit * 0.5))),
   }
-  return usedTokens >= getAutoCompactThreshold(maxTokens)
+}
+
+export function getAutoCompactThreshold(maxTokens: number, maxOutputTokens = 8192): number {
+  return getContextBudgetLimits(maxTokens, maxOutputTokens).autoCompactThreshold
+}
+
+export function shouldTriggerCompaction(usedTokens: number, maxTokens: number, thresholdPercent?: number, maxOutputTokens = 8192): boolean {
+  if (thresholdPercent !== undefined)
+    return computeContextUsagePercent(usedTokens, maxTokens) >= thresholdPercent
+  return usedTokens >= getAutoCompactThreshold(maxTokens, maxOutputTokens)
+}
+
+/** 不覆盖省略输出上限的显式配置；显式 thinking budget 必须小于动态输出上限。 */
+export function capRequestOutput(request: LLMStreamRequest, contextTokenLimit: number, inputTokens: number): LLMStreamRequest {
+  if (request.maxTokens === undefined)
+    return request
+  const maxTokens = Math.max(1, Math.min(request.maxTokens, Math.floor(contextTokenLimit - inputTokens)))
+  if (!request.thinking || request.thinkingBudgetTokens === undefined || request.thinkingBudgetTokens < maxTokens)
+    return { ...request, maxTokens }
+  if (maxTokens <= 1024)
+    return { ...request, maxTokens, thinking: false, thinkingBudgetTokens: undefined, thinkingLevel: undefined }
+  return { ...request, maxTokens, thinkingBudgetTokens: maxTokens - 1 }
 }
