@@ -688,6 +688,9 @@ export async function* handleConversationRun(
         throw makeByokConnectError({ errorCode: ErrorDetails_Error.CUSTOM, title: 'Context exceeds safe request budget', detail: 'The prepared provider request exceeds the hard context limit. No ordinary model request was sent.', isRetryable: false })
       }
       preparedRequest.request = capRequestOutput(preparedRequest.request, contextTokenLimit, usedTokensEstimate)
+      // 后台完成通知不一定需要回复；工具后续轮次及摘要仍要求有效输出。
+      if (parsed.isBackgroundTaskCompletion && round === 0)
+        preparedRequest.request.allowEmptyCompletion = true
 
       if (!breakdownCategories) {
         breakdownCategories = buildContextBreakdown({

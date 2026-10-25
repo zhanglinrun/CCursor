@@ -1,4 +1,4 @@
-import type { LLMStreamEvent } from '../handlers/llm/types'
+import type { LLMStreamEvent, LLMStreamRequest } from '../handlers/llm/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { OpenAIChatProvider } from '../handlers/llm/openai-chat'
 
@@ -7,7 +7,7 @@ vi.mock('../handlers/llm/proxyFetch', () => ({ createProxiedFetch: () => fetchMo
 
 afterEach(() => fetchMock.mockReset())
 
-async function collect(chunks: unknown[], end = true): Promise<LLMStreamEvent[]> {
+async function collect(chunks: unknown[], end = true, overrides: Partial<LLMStreamRequest> = {}): Promise<LLMStreamEvent[]> {
   const body = chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('')
     + (end ? 'data: [DONE]\n\n' : '')
   fetchMock.mockResolvedValue(new Response(body, { headers: { 'content-type': 'text/event-stream' } }))
@@ -20,7 +20,7 @@ async function collect(chunks: unknown[], end = true): Promise<LLMStreamEvent[]>
     models: [],
   })
   const events: LLMStreamEvent[] = []
-  for await (const event of provider.stream({ model: 'synthetic', messages: [{ role: 'user', content: 'Non-empty synthetic request' }] }))
+  for await (const event of provider.stream({ model: 'synthetic', messages: [{ role: 'user', content: 'Non-empty synthetic request' }], ...overrides }))
     events.push(event)
   return events
 }
@@ -71,4 +71,25 @@ it('completes a tool call when the final chunk omits delta', async () => {
     { choices: [{ finish_reason: 'tool_calls' }] },
   ])
   expect(events).toContainEqual({ type: 'tool_use_done', id: 'call-synthetic', arguments: '{}' })
+})
+
+it('accepts an explicitly allowed silent stop and preserves its usage without sending the local flag', async () => {
+  const events = await collect([
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 120, completion_tokens: 8 } },
+  ], true, { allowEmptyCompletion: true })
+  expect(events).toEqual([{ type: 'done', stopReason: 'end_turn', usage: { inputTokens: 120, outputTokens: 8, cacheReadTokens: undefined } }])
+  const request = JSON.parse(fetchMock.mock.calls[0][1].body)
+  expect(request).not.toHaveProperty('allowEmptyCompletion')
+})
+
+it.each([
+  { chunks: [] },
+  { chunks: [{ choices: [{ delta: {}, finish_reason: null }] }] },
+  { chunks: [{ choices: [{ delta: {}, finish_reason: 'length' }] }] },
+  { chunks: [{ choices: [{ delta: {}, finish_reason: 'content_filter' }] }] },
+  { chunks: [{ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }] },
+  { chunks: [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'incomplete', function: { arguments: '{}' } }] }, finish_reason: 'stop' }] }] },
+])('still rejects invalid empty streams when silent completion is allowed: %j', async ({ chunks }) => {
+  await expect(collect(chunks, true, { allowEmptyCompletion: true })).rejects.toThrow(/empty|incomplete|finish/i)
 })

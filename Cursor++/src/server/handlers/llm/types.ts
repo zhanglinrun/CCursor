@@ -54,6 +54,8 @@ export interface LLMStreamRequest {
   model: string
   messages: LLMMessage[]
   tools?: LLMTool[]
+  /** 仅后台完成通知首轮允许正常 stop 而无回复；本地策略，不发送给模型接口。 */
+  allowEmptyCompletion?: boolean
   maxTokens?: number
   thinking?: boolean
   /** 思考档位 — Anthropic 4.5-opus/4.6+ / OpenAI / Gemini 消费; 见 ProviderModel.thinkingLevel */

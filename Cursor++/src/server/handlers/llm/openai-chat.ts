@@ -134,7 +134,9 @@ export class OpenAIChatProvider implements LLMProvider {
     }
 
     if (!sawText && !sawToolCalls) {
-      throw new Error(`OpenAI Chat returned an empty completion (finish_reason=${finishReason ?? 'missing'}). Check the relay response and context limit.`)
+      if (!request.allowEmptyCompletion || finishReason !== 'stop' || toolCalls.size > 0)
+        throw new Error(`OpenAI Chat returned an empty completion (finish_reason=${finishReason ?? 'missing'}). Check the relay response and context limit.`)
+      logger.info({ model: request.model }, '[OAI_CHAT] background notification ended silently')
     }
     if (!finishReason) {
       throw new Error('OpenAI Chat stream was interrupted before a completion finish marker; incomplete response discarded.')
