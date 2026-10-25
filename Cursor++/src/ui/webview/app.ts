@@ -5,12 +5,14 @@
  * Alpine 响应式代理自动追踪 mutation → DOM 更新, 无需手动 render() / rebind。
  */
 import type { Alpine as AlpineType } from 'alpinejs'
+import type { CatalogStatus } from '../../server/config/catalogStore'
 import type { ProviderType } from '../../server/data/defaults'
 import type { ModelTestResult, ProtocolAttempt, ProtocolDetection } from '../../shared/modelTestTypes'
 import type { ProtocolFamily, ProtocolFamilyOption } from '../../shared/providerProtocol'
 import type { RemoteModelEntry } from '../../shared/remoteModels'
 import type { UsageSummary } from '../../shared/usageTypes'
 import { isProviderType } from '../../server/data/defaults'
+import { catalogModelDefaults } from '../../shared/catalogModelDefaults'
 import { reorderById } from '../../shared/listReorder'
 import {
   buildRequestUrlPreview,
@@ -29,15 +31,33 @@ declare function acquireVsCodeApi(): { postMessage: (msg: any) => void, getState
 // acquireVsCodeApi 只能调用一次
 const vscode = acquireVsCodeApi()
 
-// debounce timer for catalog search
-let acTimer: ReturnType<typeof setTimeout> | null = null
-
 export function initApp(Alpine: AlpineType) {
   // Alpine store 内 this 指向 proxy 对象, TS 无法推断 — 用 any 绕过
   const store: any = {
     // ── 来自 extension 推送 ──
     state: null as any,
 
+    catalogStatus: null as CatalogStatus | null,
+    catalogBusy: false,
+
+    get catalogSummary(): string {
+      const status = this.catalogStatus as CatalogStatus | null
+      if (!status)
+        return 'Model directory: models.dev · loading catalog…'
+      const source = { bundled: 'bundled snapshot', cache: 'local cache', remote: 'refreshed cache', empty: 'unavailable' }[status.source]
+      return `Model directory: models.dev · ${status.modelCount.toLocaleString()} models · ${status.providerCount.toLocaleString()} providers · ${source}`
+    },
+
+    get catalogUpdatedAt(): string {
+      return this.catalogStatus?.updatedAt ? new Date(this.catalogStatus.updatedAt).toLocaleString() : 'Unknown (legacy snapshot)'
+    },
+
+    refreshCatalog() {
+      if (this.catalogBusy)
+        return
+      this.catalogBusy = true
+      this.post('refreshCatalog')
+    },
     // ── 本地 UI 状态 ──
     drafts: {} as Record<string, any>,
     expanded: {} as Record<string, boolean>,
@@ -240,9 +260,7 @@ export function initApp(Alpine: AlpineType) {
       return 'Check for Updates'
     },
 
-    // ── Autocomplete ──
-    ac: null as { pid: string, mid: string, results: any[], selected: number, reqId: number } | null,
-    acReqId: 0,
+    modelDefaultsPending: {} as Record<string, { pid: string, mid: string, apiModel: string, before: Record<string, any> }>,
 
     // ── 派生 ──
     get providers(): any[] {
@@ -1500,88 +1518,44 @@ export function initApp(Alpine: AlpineType) {
       }
     },
 
-    // ── Autocomplete ──
-    searchCatalog(pid: string, mid: string, query: string) {
-      if (acTimer)
-        clearTimeout(acTimer)
-      const q = query.trim()
-      if (q.length < 2 && !this.ac) {
+    // ── 自动填充：用户只选择中转站模型，目录匹配在宿主中完成 ──
+    resolveModelDefaults(pid: string, mid: string) {
+      const draft = this.ensureDraft(pid)
+      const model = (draft.models || []).find((item: any) => item.id === mid)
+      if (!model?.apiModel?.trim())
+        return
+      for (const [requestId, pending] of Object.entries(this.modelDefaultsPending) as Array<[string, { mid: string }]>) {
+        if (pending.mid === mid)
+          delete this.modelDefaultsPending[requestId]
+      }
+      const remote = this.remoteModels[pid]?.models?.find((item: RemoteModelEntry) => item.id === model.apiModel)
+      if (remote?.catalog) {
+        this.applyCatalogEntry(pid, mid, remote.catalog)
         return
       }
-      acTimer = setTimeout(() => {
-        const reqId = ++this.acReqId
-        this.ac = { pid, mid, results: [], selected: 0, reqId }
-        vscode.postMessage({ type: 'searchCatalog', query: q.length >= 2 ? q : '', requestId: reqId })
-      }, 120)
+      const requestId = uid('defaults')
+      this.modelDefaultsPending[requestId] = { pid, mid, apiModel: model.apiModel, before: clone(model) }
+      this.post('resolveCatalogModel', { modelId: model.apiModel, requestId })
     },
 
-    toggleCatalog(pid: string, mid: string, inputEl: HTMLInputElement | null) {
-      if (this.ac?.pid === pid && this.ac?.mid === mid) {
-        this.ac = null
+    applyCatalogEntry(pid: string, mid: string, entry: any, before?: Record<string, any>) {
+      const draft = this.ensureDraft(pid)
+      const model = (draft.models || []).find((item: any) => item.id === mid)
+      if (!model)
         return
+      const defaults = catalogModelDefaults(entry, draft.baseUrl || '', model.apiModel)
+      const values = { thinkingLevel: undefined, thinkingBudgetTokens: undefined, ...defaults }
+      for (const [key, value] of Object.entries(values)) {
+        // 宿主异步回复期间，用户已编辑的字段优先。
+        if (before && JSON.stringify(model[key]) !== JSON.stringify(before[key]))
+          continue
+        if (key === 'displayName' && model.displayName && model.displayName !== model.apiModel && model.displayName !== before?.displayName)
+          continue
+        if (value === undefined)
+          delete model[key]
+        else model[key] = clone(value)
       }
-      const q = (inputEl?.value ?? '').trim()
-      const reqId = ++this.acReqId
-      this.ac = { pid, mid, results: [], selected: 0, reqId }
-      vscode.postMessage({ type: 'searchCatalog', query: q, requestId: reqId })
-      inputEl?.focus()
-    },
-
-    applyCatalogEntry(pid: string, mid: string, entry: any) {
-      const d = this.ensureDraft(pid)
-      const m = (d.models || []).find((x: any) => x.id === mid)
-      if (!m)
-        return
-
-      // id 保持 addModel 生成的随机值不变 — 作为跨 provider 全局唯一 key
-      m.apiModel = entry.id
-      if (!m.displayName?.trim())
-        m.displayName = entry.name
-      if (m.contextTokenLimit === undefined || m.contextTokenLimit === null) {
-        m.contextTokenLimit = entry.contextLimit
-        m.contextTokenLimitForMaxMode = entry.contextLimit
-      }
-      if (!m.thinking && entry.reasoning) {
-        m.thinking = true
-        if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
-          const pType = d.type
-          m.thinkingLevel = pType === 'anthropic' ? 'high' : 'medium'
-        }
-      }
-      if ((m.maxOutputTokens === undefined || m.maxOutputTokens === null) && entry.outputLimit)
-        m.maxOutputTokens = entry.outputLimit
-      if (m.supportsAgent === undefined)
-        m.supportsAgent = entry.toolCall
-      if (m.supportsImages === undefined)
-        m.supportsImages = entry.hasImages
-
-      this.ac = null
-      // x-effect 在 input 聚焦时不回写 DOM，blur 后又不重跑（m.apiModel 无二次变化）。
-      // 因此手动将选中的 entry.id 写入 DOM 再 blur，确保完整 model ID 上屏。
-      queueMicrotask(() => {
-        if (document.activeElement instanceof HTMLInputElement) {
-          document.activeElement.value = m.apiModel || ''
-          document.activeElement.blur()
-        }
-      })
-    },
-
-    acNavigate(dir: number) {
-      if (!this.ac || !this.ac.results.length)
-        return
-      this.ac.selected = Math.max(0, Math.min(this.ac.selected + dir, this.ac.results.length - 1))
-    },
-
-    acSelect(pid: string, mid: string) {
-      if (!this.ac || !this.ac.results.length)
-        return
-      const entry = this.ac.results[this.ac.selected]
-      if (entry)
-        this.applyCatalogEntry(pid, mid, entry)
-    },
-
-    acClose() {
-      this.ac = null
+      this.clearModelTest(mid)
     },
 
     // ── Remote Models (GET /v1/models) ──
@@ -1608,26 +1582,16 @@ export function initApp(Alpine: AlpineType) {
 
     applyRemoteModel(pid: string, rm: RemoteModelEntry) {
       this.addModel(pid)
-      const d = this.ensureDraft(pid)
-      const models = d.models || []
-      const lastModel = models[models.length - 1]
-      if (lastModel) {
-        lastModel.apiModel = rm.id
-        // Display Name 也一并填上。
-        //
-        // 有些中转站会把 id 混淆成不可读的串（把 flash 倒写成 hsalf 之类），
-        // 此时上游给的 display_name 才是唯一认得出来的名字。只填 apiModel 的话
-        // 用户得自己对照着手敲一遍，而这正是最容易敲错的地方。
-        // 只在还没填过时才写，避免覆盖用户已经改好的名字。
-        if (!lastModel.displayName?.trim())
-          lastModel.displayName = rm.displayName || rm.id
-        // 展开新 model 面板
-        if (!this.modelExpanded[pid])
-          this.modelExpanded[pid] = {}
-        this.modelExpanded[pid][lastModel.id] = true
-        // 触发 catalog fuzzy search 自动补全
-        queueMicrotask(() => this.searchCatalog(pid, lastModel.id, rm.id))
-      }
+      const models = this.ensureDraft(pid).models || []
+      const model = models[models.length - 1]
+      if (!model)
+        return
+      model.apiModel = rm.id
+      model.displayName = rm.displayName || rm.id
+      if (rm.catalog)
+        this.applyCatalogEntry(pid, model.id, rm.catalog)
+      else
+        this.resolveModelDefaults(pid, model.id)
     },
 
     /**
@@ -1648,8 +1612,8 @@ export function initApp(Alpine: AlpineType) {
     },
 
     /** apiModel blur — id 保持不变,不再同步覆盖 */
-    syncModelId(_pid: string, _mid: string) {
-      // id 是 addModel 生成的随机值,作为全局唯一 key,不随 apiModel 变化
+    syncModelId(pid: string, mid: string) {
+      this.resolveModelDefaults(pid, mid)
     },
 
     /** 获取单个 model 的校验错误 (供模板使用, 避免长表达式) */
@@ -1745,11 +1709,22 @@ export function initApp(Alpine: AlpineType) {
         s.remoteModels = { ...s.remoteModels, [pid]: { loading: false, models: msg.models || [] } }
       }
     }
-    else if (msg?.type === 'catalogResults') {
-      if (!s.ac || msg.requestId !== s.ac.reqId)
+    else if (msg?.type === 'catalogStatus') {
+      s.catalogStatus = msg.status
+      s.catalogBusy = !!msg.status?.refreshing
+    }
+    else if (msg?.type === 'catalogModelResolved') {
+      const pending = s.modelDefaultsPending[msg.requestId]
+      if (!pending)
         return
-      s.ac.results = msg.results || []
-      s.ac.selected = 0
+      delete s.modelDefaultsPending[msg.requestId]
+      const model = (s.getDraft(pending.pid).models || []).find((item: any) => item.id === pending.mid)
+      if (!model || model.apiModel !== pending.apiModel)
+        return
+      if (msg.entry)
+        s.applyCatalogEntry(pending.pid, pending.mid, msg.entry, pending.before)
+      else
+        s.toast('No reliable catalog match. Enter this model’s limits manually; its endpoint ID was kept.', 'warn')
     }
     else if (msg?.type === 'searchTestResult') {
       s.searchTesting = false

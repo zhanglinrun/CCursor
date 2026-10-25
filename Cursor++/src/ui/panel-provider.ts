@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
 import { bumpRefreshSignal } from '../server'
-import { searchCatalog } from '../server/config/catalogStore'
+import { getCatalogStatus, refreshCatalog, resolveCatalogModel } from '../server/config/catalogStore'
 import { loadProviders, updateProviders } from '../server/config/providersStore'
 import { effectiveProviderType, isProviderType } from '../server/data/defaults'
 import { detectModelProtocol, runModelTest } from '../server/handlers/llm/modelTest'
@@ -122,6 +122,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'ready':
           await refreshState()
           this.postState()
+          this.view?.webview.postMessage({ type: 'catalogStatus', status: getCatalogStatus() })
           break
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
@@ -158,13 +159,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           })
           break
         }
-        case 'searchCatalog': {
-          const query = typeof msg.query === 'string' ? msg.query : ''
-          const results = searchCatalog(query, 30)
+        case 'refreshCatalog': {
+          const pending = refreshCatalog()
+          this.view?.webview.postMessage({ type: 'catalogStatus', status: getCatalogStatus() })
+          const status = await pending
+          this.view?.webview.postMessage({ type: 'catalogStatus', status, refreshed: !status.lastError })
+          break
+        }
+        case 'resolveCatalogModel': {
+          const modelId = typeof msg.modelId === 'string' ? msg.modelId.slice(0, 500) : ''
           this.view?.webview.postMessage({
-            type: 'catalogResults',
+            type: 'catalogModelResolved',
             requestId: msg.requestId,
-            results,
+            entry: resolveCatalogModel(modelId),
           })
           break
         }
@@ -221,7 +228,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               break
             }
             const json = await resp.json() as any
-            const models = normalizeRemoteModels(json)
+            const models = normalizeRemoteModels(json).map(model => ({ ...model, catalog: resolveCatalogModel(model.id, model.displayName, model.ownedBy) }))
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models })
           }
           catch (err) {

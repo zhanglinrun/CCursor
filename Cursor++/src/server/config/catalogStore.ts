@@ -1,173 +1,329 @@
-/**
- * models-catalog.json —— 只读的上游模型清单快照 (安装器从 models.dev 抓取)
- *
- * 用途: 面板"添加模型"时给出模糊搜索补全 + 默认值预填,
- *       特别是 contextTokenLimit 这种查官方文档才知道的数字。
- *
- * 格式 (部分字段):
- *   {
- *     [providerKey]: {
- *       id, name, npm, doc, env,
- *       models: {
- *         [modelId]: { id, name, reasoning, tool_call, modalities, limit: { context, output }, ... }
- *       }
- *     }
- *   }
- *
- * 设计:
- *   - 懒加载 + 进程内缓存,面板不在用时零开销
- *   - 扁平化 + 按 id 去重 (first-wins, 跨 provider 同模型参数一致)
- *   - 模糊搜索走 fuse.js,只索引 id + name —— 符合用户"按模型名找"的直觉
- *   - 文件 1.7MB / 4000+ 模型, 全量推给 webview 太重 → 只推搜索结果
- */
-import { readFileSync } from 'node:fs'
+/** models.dev metadata is only used to prefill explicitly selected models, never saved providers. */
+import type { CatalogEntry } from '../../shared/catalogModelDefaults'
+import { randomUUID } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import Fuse from 'fuse.js'
+import { matchCatalogModel } from '../../shared/catalogModelDefaults'
 import { logger } from '../logger'
 import { getModelsCatalogFilePath } from './paths'
 
-export interface CatalogEntry {
-  /** 上游 provider key, e.g. "anthropic", "openai", "moark" */
-  providerKey: string
-  /** 上游 provider 展示名, e.g. "Anthropic" */
-  providerName: string
-  /** 模型 id, e.g. "claude-opus-4-5" */
-  id: string
-  /** 展示名, e.g. "Claude Opus 4.5 (latest)" */
-  name: string
-  /** 上下文 token 限制 (catalog.limit.context) */
-  contextLimit: number
-  /** 输出 token 限制 (catalog.limit.output) — 暂未使用,保留以便未来扩展 */
-  outputLimit?: number
-  /** 原生 reasoning / thinking 支持 */
-  reasoning: boolean
-  /** 原生 tool_call 支持 */
-  toolCall: boolean
-  /** 输入模态含 image → 可映射到 supportsImages */
-  hasImages: boolean
-  /** 发布日期 (YYYY-MM-DD) — 用于搜索结果降序排列 */
-  releaseDate?: string
+export const CATALOG_URL = 'https://models.dev/api.json'
+export const CATALOG_TIMEOUT_MS = 10_000
+export const CATALOG_MAX_BYTES = 16 * 1024 * 1024
+
+export type { CatalogEntry } from '../../shared/catalogModelDefaults'
+
+export interface CatalogStatus {
+  source: 'bundled' | 'cache' | 'remote' | 'empty'
+  url: string
+  modelCount: number
+  providerCount: number
+  /** Last successful download, not the file modification time or a model release date. */
+  updatedAt?: string
+  refreshing: boolean
+  lastError?: string
 }
 
-interface CatalogRaw {
-  [providerKey: string]: {
-    id?: string
-    name?: string
-    models?: {
-      [modelId: string]: {
-        id?: string
-        name?: string
-        reasoning?: boolean
-        tool_call?: boolean
-        release_date?: string
-        modalities?: { input?: string[], output?: string[] }
-        limit?: { context?: number, output?: number }
-      }
-    }
-  }
+interface CatalogOptions {
+  cachePath: string
+  bundledPath: string
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+  maxBytes?: number
+  now?: () => Date
 }
 
-let cache: CatalogEntry[] | null = null
-let fuse: Fuse<CatalogEntry> | null = null
-let loadAttempted = false
-
-function buildFuse(entries: CatalogEntry[]): Fuse<CatalogEntry> {
-  return new Fuse(entries, {
-    keys: [
-      { name: 'id', weight: 2 },
-      { name: 'name', weight: 1 },
-    ],
-    threshold: 0.4, // 0 = exact, 1 = match anything
-    ignoreLocation: true, // 命中位置无所谓 (不偏好开头)
-    minMatchCharLength: 2,
-    includeScore: false,
-  })
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
 }
 
-function flatten(raw: CatalogRaw): CatalogEntry[] {
-  // 不做 id 去重 —— 不同聚合商对同一模型的 contextLimit 可能不一致 (catalog 未清理),
-  // 全部保留让用户自己挑正确的来源。
-  const out: CatalogEntry[] = []
-  for (const [providerKey, prov] of Object.entries(raw)) {
-    if (!prov || typeof prov !== 'object')
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function positiveLimit(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+/** Keep provider-specific copies: resellers can publish different limits for the same id. */
+export function parseCatalog(raw: unknown): CatalogEntry[] {
+  const root = record(raw)
+  if (!root)
+    throw new Error('models.dev catalog must be an object')
+  const entries: CatalogEntry[] = []
+  for (const [providerKey, value] of Object.entries(root)) {
+    const provider = record(value)
+    const models = record(provider?.models)
+    if (!providerKey.trim() || !models)
       continue
-    const providerName = prov.name || providerKey
-    const models = prov.models
-    if (!models)
-      continue
-    for (const [modelId, m] of Object.entries(models)) {
-      if (!m || typeof m !== 'object')
+    for (const [modelId, value] of Object.entries(models)) {
+      const model = record(value)
+      const limit = record(model?.limit)
+      if (!model || !modelId.trim() || !positiveLimit(limit?.context))
         continue
-      const ctx = m.limit?.context
-      if (typeof ctx !== 'number')
-        continue // 只保留有 context 的条目,否则预填意义不大
-      out.push({
+      // Missing output is allowed; published invalid/zero limits are never offered as defaults.
+      if (limit.output !== undefined && !positiveLimit(limit.output))
+        continue
+      const modalities = record(model.modalities)
+      const reasoningOptions = Array.isArray(model.reasoning_options) ? model.reasoning_options : []
+      const supportedLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+      const levels = reasoningOptions.flatMap((option) => {
+        const item = record(option)
+        return item?.type === 'effort' && Array.isArray(item.values) ? item.values.filter((value): value is NonNullable<CatalogEntry['reasoningLevels']>[number] => typeof value === 'string' && supportedLevels.has(value)) : []
+      })
+      const cost = record(model.cost)
+      const tiers = Array.isArray(cost?.tiers) ? cost.tiers : []
+      const contextLevels = tiers.flatMap((value) => {
+        const tier = record(record(value)?.tier)
+        return tier?.type === 'context' && positiveLimit(tier.size) ? [tier.size] : []
+      })
+      entries.push({
         providerKey,
-        providerName,
-        id: m.id || modelId,
-        name: m.name || m.id || modelId,
-        contextLimit: ctx,
-        outputLimit: typeof m.limit?.output === 'number' ? m.limit.output : undefined,
-        reasoning: m.reasoning === true,
-        toolCall: m.tool_call === true,
-        hasImages: Array.isArray(m.modalities?.input) && m.modalities!.input!.includes('image'),
-        releaseDate: typeof m.release_date === 'string' ? m.release_date : undefined,
+        providerName: text(provider?.name) ?? providerKey,
+        id: text(model.id) ?? modelId,
+        name: text(model.name) ?? text(model.id) ?? modelId,
+        contextLimit: limit.context,
+        outputLimit: positiveLimit(limit.output) ? limit.output : undefined,
+        reasoning: model.reasoning === true,
+        toolCall: model.tool_call === true,
+        hasImages: Array.isArray(modalities?.input) && modalities.input.includes('image'),
+        releaseDate: text(model.release_date),
+        canonicalId: text(model.canonical_model_id),
+        description: text(model.description),
+        reasoningLevels: [...new Set(levels)],
+        contextLevels,
+        supportsFast: !!record(record(record(model.experimental)?.modes)?.fast),
+        hasTextOutput: !Array.isArray(modalities?.output) || modalities.output.includes('text'),
       })
     }
   }
-  return out
+  if (!entries.length)
+    throw new Error('models.dev catalog contains no usable models with positive token limits')
+  return entries
 }
 
-function loadCatalog(): CatalogEntry[] {
-  if (cache)
-    return cache
-  if (loadAttempted)
-    return []
-  loadAttempted = true
-  try {
-    const path = getModelsCatalogFilePath()
-    const raw = readFileSync(path, 'utf-8')
-    const parsed = JSON.parse(raw) as CatalogRaw
-    cache = flatten(parsed)
-    fuse = buildFuse(cache)
-    logger.info({ count: cache.length }, '[CFG] models catalog loaded')
-    return cache
+function buildFuse(entries: CatalogEntry[]): Fuse<CatalogEntry> {
+  return new Fuse(entries, {
+    keys: [{ name: 'id', weight: 2 }, { name: 'name', weight: 1 }],
+    threshold: 0.4,
+    ignoreLocation: true,
+    minMatchCharLength: 2,
+  })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export class CatalogStore {
+  private entries: CatalogEntry[] = []
+  private fuse = buildFuse([])
+  private loaded = false
+  private refreshing?: Promise<CatalogStatus>
+  private status: Omit<CatalogStatus, 'refreshing'> = {
+    source: 'empty',
+    url: CATALOG_URL,
+    modelCount: 0,
+    providerCount: 0,
   }
-  catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logger.warn({ err: msg }, '[CFG] models catalog unavailable (autocomplete disabled)')
-    cache = []
-    fuse = buildFuse(cache)
-    return cache
+
+  constructor(private readonly options: CatalogOptions) {}
+
+  private install(entries: CatalogEntry[], index: Fuse<CatalogEntry>, source: CatalogStatus['source'], updatedAt?: string) {
+    this.entries = entries
+    this.fuse = index
+    this.status = {
+      source,
+      url: CATALOG_URL,
+      modelCount: entries.length,
+      providerCount: new Set(entries.map(entry => entry.providerKey)).size,
+      updatedAt,
+    }
+  }
+
+  private load() {
+    if (this.loaded)
+      return
+    this.loaded = true
+    const errors: string[] = []
+    let best: { entries: CatalogEntry[], source: 'cache' | 'bundled', updatedAt?: string } | undefined
+    for (const [path, source] of [[this.options.cachePath, 'cache'], [this.options.bundledPath, 'bundled']] as const) {
+      try {
+        if (statSync(path).size > (this.options.maxBytes ?? CATALOG_MAX_BYTES))
+          throw new Error('Catalog file exceeds size limit')
+        const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+        const snapshot = record(raw)
+        // Older installers saved the bare models.dev document. Continue to accept it.
+        const wrapped = snapshot?.version === 1 && snapshot?.source === CATALOG_URL
+        const entries = parseCatalog(wrapped ? snapshot.catalog : raw)
+        const updatedAt = wrapped && typeof snapshot.updatedAt === 'string' && Number.isFinite(Date.parse(snapshot.updatedAt))
+          ? new Date(snapshot.updatedAt).toISOString()
+          : undefined
+        // Prefer a newer packaged snapshot over a stale/legacy installer cache.
+        if (!best || (updatedAt ?? '') > (best.updatedAt ?? ''))
+          best = { entries, source, updatedAt }
+      }
+      catch (error) {
+        errors.push(errorMessage(error))
+      }
+    }
+    if (best) {
+      this.install(best.entries, buildFuse(best.entries), best.source, best.updatedAt)
+      return
+    }
+    this.status.lastError = `Catalog unavailable: ${errors.join('; ')}`
+    logger.warn({ error: this.status.lastError }, '[CFG] models catalog unavailable')
+  }
+
+  getStatus(): CatalogStatus {
+    this.load()
+    return { ...this.status, refreshing: !!this.refreshing }
+  }
+
+  search(query: string, limit = 20): CatalogEntry[] {
+    this.load()
+    const count = Math.max(1, Math.min(100, Math.floor(limit) || 20))
+    const entries = query.trim() ? this.fuse.search(query.slice(0, 500), { limit: count }).map(result => result.item) : [...this.entries]
+    return entries.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '')).slice(0, count)
+  }
+
+  match(modelId: string, displayName = '', ownedBy = ''): CatalogEntry | undefined {
+    this.load()
+    return matchCatalogModel(this.entries, modelId, displayName, ownedBy)
+  }
+
+  /** One shared request, deadline covers both headers and the streamed/decompressed body. */
+  private async download(): Promise<string> {
+    const controller = new AbortController()
+    const maxBytes = this.options.maxBytes ?? CATALOG_MAX_BYTES
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new Error('models.dev catalog request timed out'))
+      }, this.options.timeoutMs ?? CATALOG_TIMEOUT_MS)
+    })
+    const request = async () => {
+      const response = await (this.options.fetchImpl ?? fetch)(CATALOG_URL, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+        redirect: 'error',
+        credentials: 'omit',
+      })
+      if (!response.ok)
+        throw new Error(`models.dev catalog request failed (HTTP ${response.status})`)
+      if (Number(response.headers.get('content-length')) > maxBytes)
+        throw new Error('models.dev catalog exceeds size limit')
+      if (!response.body)
+        throw new Error('models.dev catalog response is empty')
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let size = 0
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done)
+            break
+          size += value.byteLength
+          if (size > maxBytes)
+            throw new Error('models.dev catalog exceeds size limit')
+          chunks.push(value)
+        }
+        return Buffer.concat(chunks, size).toString('utf8')
+      }
+      finally {
+        void reader.cancel().catch(() => {})
+      }
+    }
+    try {
+      return await Promise.race([request(), timeout])
+    }
+    finally {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }
+
+  /** Same-directory rename commits the validated snapshot; no last-good file is ever deleted. */
+  private async persist(content: string) {
+    const path = this.options.cachePath
+    await mkdir(dirname(path), { recursive: true })
+    const temporary = `${path}.${randomUUID()}.tmp`
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try {
+        await file.writeFile(content, 'utf8')
+        await file.sync()
+      }
+      finally {
+        await file.close()
+      }
+      await rename(temporary, path)
+    }
+    finally {
+      await rm(temporary, { force: true }).catch(() => {})
+    }
+  }
+
+  refresh(): Promise<CatalogStatus> {
+    this.load()
+    if (this.refreshing)
+      return this.refreshing
+    this.refreshing = (async () => {
+      try {
+        const raw: unknown = JSON.parse(await this.download())
+        const entries = parseCatalog(raw)
+        const index = buildFuse(entries)
+        const updatedAt = (this.options.now?.() ?? new Date()).toISOString()
+        const content = JSON.stringify({ version: 1, source: CATALOG_URL, updatedAt, catalog: raw })
+        if (Buffer.byteLength(content) > (this.options.maxBytes ?? CATALOG_MAX_BYTES))
+          throw new Error('models.dev catalog snapshot exceeds size limit')
+        await this.persist(content)
+        this.install(entries, index, 'remote', updatedAt)
+      }
+      catch (error) {
+        this.status.lastError = errorMessage(error)
+        logger.warn({ error: this.status.lastError }, '[CFG] models catalog refresh failed; keeping last good catalog')
+      }
+      finally {
+        this.refreshing = undefined
+      }
+      return this.getStatus()
+    })()
+    return this.refreshing
   }
 }
 
-/**
- * Fuse.js 模糊搜索 id + name,返回前 N 条。
- * query 为空时返回按 releaseDate 降序的最新条目 (browse 模式)。
- */
+// esbuild copies the single installer snapshot beside dist/extension.js for VSIX-only installs.
+let store: CatalogStore | undefined
+function getStore(): CatalogStore {
+  store ??= new CatalogStore({
+    cachePath: getModelsCatalogFilePath(),
+    bundledPath: join(__dirname, 'models-catalog.json'),
+  })
+  return store
+}
+
 export function searchCatalog(query: string, limit = 20): CatalogEntry[] {
-  const entries = loadCatalog()
-  if (!query.trim()) {
-    return [...entries]
-      .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
-      .slice(0, limit)
-  }
-  if (!fuse)
-    return []
-  return fuse.search(query, { limit })
-    .map(r => r.item)
-    .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
+  return getStore().search(query, limit)
 }
 
-/** 测试用 */
+export function getCatalogStatus(): CatalogStatus {
+  return getStore().getStatus()
+}
+
+export function refreshCatalog(): Promise<CatalogStatus> {
+  return getStore().refresh()
+}
+
 export function resetCatalogCacheForTests(): void {
-  cache = null
-  fuse = null
-  loadAttempted = false
+  store = undefined
 }
 
-export function setCatalogForTests(entries: CatalogEntry[]): void {
-  cache = entries
-  fuse = buildFuse(entries)
-  loadAttempted = true
+export function resolveCatalogModel(modelId: string, displayName = '', ownedBy = ''): CatalogEntry | undefined {
+  return getStore().match(modelId, displayName, ownedBy)
 }

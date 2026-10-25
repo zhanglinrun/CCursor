@@ -4,7 +4,7 @@
  * 释放内容:
  *   - routes.json         ← DEFAULT_ROUTES (强制覆盖:白名单由开发者编排,非用户数据)
  *   - providers.json      ← DEFAULT_PROVIDERS (keep-if-exists:用户 API Key 不能丢)
- *   - models-catalog.json ← 从 installer 自带的 assets 复制 (models.dev 快照,强制覆盖)
+ *   - models-catalog.json ← installer 快照 (keep-if-exists: 不降级用户刷新过的清单)
  *
  * routes.json 强制覆盖的理由:
  *   redirect 数组由我们主动编排,用户不应手改;每次 install 都会拿到最新白名单,
@@ -131,7 +131,7 @@ export function releaseDefaults(log) {
   release(ROUTES_FILE_NAME, routes, log, { force: true });
   release(PROVIDERS_FILE_NAME, DEFAULT_PROVIDERS, log);
   release(WEB_TOOLS_FILE_NAME, DEFAULT_WEB_TOOLS, log);
-  copyAsset(MODELS_CATALOG_FILE_NAME, log, { force: true });
+  copyAsset(MODELS_CATALOG_FILE_NAME, log);
 
   log?.('[defaults] Done');
 }

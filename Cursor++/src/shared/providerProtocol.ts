@@ -301,7 +301,7 @@ export function suggestProtocol(baseUrl: string, apiModel = ''): ProtocolSuggest
   if (model.startsWith('gemini')) {
     return { type: 'gemini', reason: 'the model name starts with gemini' }
   }
-  if (model.startsWith('gpt-5') || /^o[1-9]\b/.test(model)) {
+  if (model.startsWith('gpt-') || /^o[1-9]\b/.test(model)) {
     return { type: 'openai-responses', reason: 'this generation officially uses the Responses API' }
   }
 

@@ -1,4 +1,3 @@
-import { Autocomplete } from './autocomplete'
 import { CustomSelect } from './custom-select'
 
 /**
@@ -103,38 +102,27 @@ export function ModelCard() {
         </label>
       </div>
       <div class="model-body" x-show="$store.app.modelExpanded[p.id]?.[m.id]" x-cloak>
-        {/* 模型名 + 自动补全 */}
-        <div class="field autocomplete" {...{ 'x-on:click.outside': '$store.app.acClose()' }}>
+        {/* 只选择端点实际返回的模型，目录参数由宿主自动匹配。 */}
+        <div class="field">
           <label>
             {'API Model '}
-            <span class="label-note">the real name sent to the endpoint</span>
+            <span class="label-note">select an available model; parameters fill automatically</span>
           </label>
-          <div class="ac-input-wrap">
-            <input
-              type="text"
-              x-ref="acInput"
-              x-effect="if(document.activeElement !== $el) $el.value = m.apiModel || ''"
-              x-on:input="$store.app.updateModelField(p.id, m.id, 'apiModel', $event.target.value); $store.app.searchCatalog(p.id, m.id, $event.target.value)"
-              {...{ 'x-on:blur': '$store.app.syncModelId(p.id, m.id)' }}
-              {...{ 'x-on:keydown.arrow-down.prevent': '$store.app.acNavigate(1)' }}
-              {...{ 'x-on:keydown.arrow-up.prevent': '$store.app.acNavigate(-1)' }}
-              {...{ 'x-on:keydown.enter.prevent': '$store.app.acSelect(p.id, m.id)' }}
-              {...{ 'x-on:keydown.escape.prevent': '$store.app.acClose()' }}
-              autocomplete="off"
-              x-bind:class="{'invalid': me?.apiModel}"
-            />
-            <button
-              class="ac-toggle"
-              type="button"
-              title="Browse the built-in model catalog"
-              tabindex={-1}
-              {...{ 'x-on:mousedown.prevent': '$store.app.toggleCatalog(p.id, m.id, $refs.acInput)' }}
-            >
-              <span class="ac-toggle-caret" x-bind:class="{ 'open': $store.app.ac?.pid === p.id && $store.app.ac?.mid === m.id }">&#x25BE;</span>
-            </button>
-          </div>
+          <input
+            type="text"
+            x-bind:list="'available-' + p.id + '-' + m.id"
+            x-effect="if(document.activeElement !== $el) $el.value = m.apiModel || ''"
+            x-on:input="$store.app.updateModelField(p.id, m.id, 'apiModel', $event.target.value)"
+            x-on:change="$store.app.syncModelId(p.id, m.id)"
+            autocomplete="off"
+            x-bind:class="{'invalid': me?.apiModel}"
+          />
+          <datalist x-bind:id="'available-' + p.id + '-' + m.id">
+            <template x-for="rm in ($store.app.remoteModels[p.id]?.models || [])" x-bind:key="rm.id">
+              <option x-bind:value="rm.id" x-text="rm.displayName || rm.id"></option>
+            </template>
+          </datalist>
           <div class="err" x-show="me?.apiModel" x-text="me?.apiModel"></div>
-          <Autocomplete />
         </div>
 
         {/* 显示名称 —— Cursor 客户端所有 UI 路径都走这一个名字, 不需要另设简称 */}

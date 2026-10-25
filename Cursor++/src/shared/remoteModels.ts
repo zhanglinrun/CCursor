@@ -15,6 +15,8 @@
  * 丢了这个字段，用户面对的就是一列乱码。
  */
 
+import type { CatalogEntry } from './catalogModelDefaults'
+
 /** 上游一条模型（归一化后） */
 export interface RemoteModelEntry {
   /** 填进 apiModel 的值 —— 请求时真正发给端点的这个名字 */
@@ -25,6 +27,8 @@ export interface RemoteModelEntry {
   ownedBy: string
   /** 排序用的毫秒时间戳；上游没给就是 0 */
   createdAt: number
+  /** Backend resolves metadata without replacing the endpoint's model id. */
+  catalog?: CatalogEntry
 }
 
 function firstNonEmptyString(...candidates: unknown[]): string {
