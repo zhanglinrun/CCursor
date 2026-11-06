@@ -1,87 +1,79 @@
-# CCursor — maintained BYOK fork
+# CCursor (Cursor++) — Bring Your Own Key for Cursor
 
-[中文](README_CN.md) · [Integration and maintenance](docs/INTEGRATION.md) · [Changelog](CHANGELOG.md)
+Use **your own LLM API keys** in [Cursor IDE](https://cursor.com) — Anthropic, OpenAI, Google Gemini, or any OpenAI-compatible endpoint — while keeping Cursor's full Agent experience. A local BYOK server runs inside Cursor's extension host, intercepts ConnectRPC/REST traffic, and routes LLM requests to your configured providers. Toggle back to your official Cursor subscription at any time.
 
-An independently maintained fork of [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor), incorporating [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK) enhancements and selected upstream compatibility fixes. Current version: **0.1.2**. This is not an official CometixSpace or Yoahoug distribution.
+[中文](README_CN.md) · [Changelog](CHANGELOG.md) · [Integration notes](docs/INTEGRATION.md)
 
-## Included
+Current version: **0.1.3** · Maintained at **zhanglinrun/CCursor** · License: AGPL-3.0-or-later
 
-- Yoahoug's changes through `0.0.26`: search/fetch fixes, custom search endpoints, per-model protocols and probing, usage/cache statistics, UI improvements, performance fixes and local development tools.
-- PR #31: extensionless ConnectRPC installation anchors.
-- PR #33: legacy Agent Host fallback for Remote SSH.
-- PR #38: local model refresh, HTTP routing, Auto/default resolution and connect turn routing.
-- PR #30: Goal tools and version-aware server ownership across windows.
-- PR #35: repeated compaction during long tool chains.
-- PR #18 and #17: consistent enabled-model selection and escaped Canvas exports.
-- Integration fixes and regression tests for disabled Auto models, fetch Request overrides, patch identification and incompatible preflight exit codes.
+## Features
 
-Exact source revisions are recorded in [upstream-sources.json](upstream-sources.json). The Yoahoug history is preserved in Git.
+**Core BYOK**
 
-## Build and verify
+- **One-click mode switch** — status-bar button in IDE windows and a sidebar button in the Agent window; requests are idempotent, so a double-fired click can no longer flip the toggle twice. Switching back to OFF restores Cursor's official behavior untouched (including its local-loop turn routing).
+- **Multi-provider** — Anthropic, OpenAI (Chat + Responses API), Google Gemini, and any OpenAI-compatible endpoint; protocol, base URL and API key are configured per model.
+- **Hot reload** — provider/model changes take effect without restarting Cursor.
 
-Requires **Node.js 22+**, pnpm **10.32.1**, and an installed Cursor for the SQLite integration tests. `Cursor++/package.json` pins pnpm. Run from the repository root:
+**Agent experience**
 
-```sh
-cd Cursor++
-pnpm install --frozen-lockfile
-cd ../installer
-npm ci
-cd ..
-node scripts/verify.mjs
-npm --prefix installer run build:all
-node installer/dist/cli.cjs check
-```
+- **Full agent mode** — 22+ built-in tools (Shell, Read, Grep, Glob, Write, Edit, ApplyPatch, WebSearch, WebFetch, TodoWrite, …), MCP servers, and dynamic tool discovery (`GetDynamicTools`) with large results spilled to a file on the workspace machine — including Remote-SSH/WSL windows, where the file is written by the client, not the server.
+- **Subagents & Goal tool** — parallel Task subagents and a Goal tool for long-running, outcome-driven work; version-aware server ownership keeps multi-window setups consistent.
+- **Context compaction** — soft/hard budgets reserve output headroom, trigger a summary at 90% of the safe budget, and only block requests at the hard limit (e.g. 855K/950K for a 1M window with 32K output). Checkpoints persist across turns; failed summaries never replace history with a text excerpt.
+- **Native error banner** — provider errors surface as Cursor's retry banner with retryable/non-retryable classification.
 
-Verification uses `Temp/tests` and synthetic test homes, not your normal BYOK configuration. Set `CURSOR_APP_ROOT` for tests if Cursor is installed in a custom location. Set `CCURSOR_CURSOR_ROOT` for installer detection; both values point to `resources/app`.
+**Model management**
 
-Build outputs:
+- **Visual config UI** — Chinese-localized sidebar panel for providers and models, with a model catalog (models.dev) snapshot bundled offline. Click **Fetch**, pick an endpoint model, and display name, protocol, capabilities, context/output limits, thinking level and quick-switch defaults fill in automatically; manual edits always win after **Save**.
+- **Usage dashboard** — per-window token and cache statistics.
+- **Update channel** — the panel's **check for extension updates** downloads the latest stable Release from this repository and replaces the extension body.
 
-- `installer/dist/cli.cjs` and its sibling `models-catalog.json`.
-- `installer/vsix/cursor2plus-0.1.2.vsix`.
+**Window & remote compatibility**
 
-Keep the installer directory layout intact. The CLI requires its local dependencies and the sibling `vsix` directory.
+- **Agent Window (glass) support** — ConnectRPC calls in the Agent window are routed at the renderer level to the local BYOK server, with the official transport kept as fallback.
+- **Remote SSH / WSL / Dev Containers** — a topology guard keeps the agent host on Cursor's legacy path in remote windows when BYOK is on (the remote agent host cannot reach your local server), and the extension prompts you to reload when a mismatch is detected.
+- **Route freshness** — routing rules reload on demand from `routes.json` before each decision, so the first requests after a BYOK toggle already use the new rules.
 
 ## Install and update
 
-**First run `check`; stop if it reports a mismatch. Fully exit all Cursor windows before installation or update.**
+> Requires an installed Cursor. **Fully exit all Cursor windows before installing or updating.** Windows, macOS and Linux are supported by the packaging script; the maintained preflight target is Windows Cursor 3.27.x.
+
+Download the CLI from this repository (or build it yourself, see below), then run `check` first — stop if it reports a mismatch:
 
 ```sh
-node installer/dist/cli.cjs install
-# Existing installation: restore old patches, then install the current build
-node installer/dist/cli.cjs update
-node installer/dist/cli.cjs status
+node installer/dist/cli.cjs check    # read-only preflight
+node installer/dist/cli.cjs install  # first installation
+node installer/dist/cli.cjs update   # upgrade an existing installation
+node installer/dist/cli.cjs status   # installation status
+node installer/dist/cli.cjs uninstall # restore Cursor's original files
 ```
 
-Run only the command appropriate to your installation. To restore the application files:
+The installer patches Cursor's application files (renderer hook, HTTP router, agent-host guards) and installs the Cursor++ extension; dropping the VSIX into Cursor alone is not enough. Panel updates replace the extension body only — changes that involve `installer/src/` require re-running the installer. After Cursor upgrades itself, re-run `check` and `update`.
+
+Download the latest release: <https://github.com/zhanglinrun/CCursor/releases/latest> — do not use `npx @cometix/ccursor`, which installs the upstream distribution and replaces this fork.
+
+## Build from source
+
+Requires **Node.js 22+** and pnpm **10.32.1** (pinned in `Cursor++/package.json`), plus an installed Cursor for the SQLite integration tests:
 
 ```sh
-node installer/dist/cli.cjs uninstall
+cd Cursor++ && pnpm install --frozen-lockfile
+cd ../installer && npm ci && cd ..
+node scripts/verify.mjs                 # types, lint, extension + installer tests, version sync
+npm --prefix installer run build:all    # builds installer/dist/cli.cjs + vsix
+node installer/dist/cli.cjs check
 ```
 
-Dragging a VSIX into Cursor does not apply the required application patches. Panel updates replace the extension body only; changes under `installer/src/` require rebuilding and running the installer. After each Cursor update, rebuild if necessary and repeat `check` and installation/update.
+Tests run against synthetic homes under `Temp/tests`, never your real BYOK configuration. For custom Cursor locations, point `CURSOR_APP_ROOT` (tests) and `CCURSOR_CURSOR_ROOT` (installer) at Cursor's `resources/app`.
 
-The update channel points to **zhanglinrun/CCursor**. Existing installations can use **检查扩展更新** in the Cursor++ panel to download the latest stable Release; fully restart Cursor after updating. [Download v0.1.2](https://github.com/zhanglinrun/CCursor/releases/tag/v0.1.2). `npx @cometix/ccursor` installs the upstream distribution and replaces this fork.
+## Context compaction and model catalog in detail
 
-## Context compaction and model catalog
+- Compaction checks before every model request — new prompts, tool results and schemas included. A failed soft-trigger summary keeps the history intact and the session may continue below the hard limit. Oversized summary input is summarized in bounded chunks; empty/truncated summaries are never committed, and a local text excerpt is never passed off as a summary.
+- The catalog refreshes from `https://models.dev/api.json` on demand; failures keep the previous snapshot. The wire model id stays unchanged and Fast stays off unless you enable it. Refresh the bundled snapshot with `node installer/scripts/update-models-catalog.mjs` before rebuilding — this never touches user configuration.
 
-- Compaction follows PI-Desktop `7a95fd0`'s soft/hard budgets: reserve output/prompt headroom, try at 90% of the safe budget, and block ordinary requests only at the hard limit. With a 1M window and 32K output budget, the trigger/hard limit are **855K/950K**; with 64K output they are **842.4K/936K**.
-- Check before every model request, including new prompts, tool results and schemas. A failed soft-trigger summary preserves history and may continue below the hard limit. Oversized summary input is summarized in bounded chunks; failed/empty/truncated summaries are never replaced with a local text excerpt.
-- The model catalog uses `https://models.dev/api.json`, with manual refresh and a bundled offline fallback. Click **Fetch** and select an available endpoint model: name, protocol, capabilities, token limits, reasoning and quick-switch defaults fill automatically, without a second catalog picker. The wire model id stays unchanged and Fast stays off. Changing the model reapplies defaults; manual edits remain available and **Save** is required. Unknown/ambiguous models require manual limits rather than fuzzy guesses; address and API keys stay untouched.
-- Refresh the build snapshot with `node installer/scripts/update-models-catalog.mjs`, then rebuild. This does not touch user configuration.
+## Remote workspaces: what to verify
 
-For development GitHub queries, use `pwsh -File scripts/github-api.ps1 -Endpoint repos/vastsa/PI-Desktop` or authenticated `gh api`. The script runs GET only, reuses the system proxy and existing login, and never stores tokens or changes global settings. Raw HTTP does not reuse the CLI login (anonymous: 60/hour; authenticated REST normally: 5000/hour).
-
-## Remote SSH and verification limits
-
-The current branch passed a read-only patch preflight against **Windows Cursor 3.27.12**. This verifies bundle compatibility, not a live SSH Agent session. The earlier local 3.15.19 build lacked the glass refresh anchor and is rejected by preflight.
-
-- PR #33 forces the legacy Agent Host path; Agent Host-specific features may be unavailable. This also affects official mode while the patch remains installed.
-- PR #38 writes `cursor.experimental.startupConnectTransport = false`; uninstall does not restore that setting. Remove your override manually if you want Cursor's default again.
-- Before relying on a remote workspace, verify hostname/current directory, remote-only file read/edit, shell execution, cancellation and subagent file access.
-- The first upgrade from an old server owner requires closing every Cursor window once.
-
-See [the maintenance record](docs/INTEGRATION.md) for checks, source updates and rollback guidance. GitHub Releases distribute this fork's VSIX; no npm package is published.
+The preflight verifies bundle compatibility, not a live remote session. Before relying on a remote workspace, confirm hostname/current directory, remote-only file read/edit, shell execution, cancellation and subagent file access — not just chat replies. Two accepted trade-offs remain: the legacy agent-host fallback may leave some Agent-Host-only features unavailable while patched, and BYOK-on writes `cursor.experimental.startupConnectTransport = false`; uninstalling does not restore that setting — remove the override manually if you want Cursor's default back. Upgrading from an old server owner requires closing every Cursor window once.
 
 ## Attribution and license
 
-Original project: CometixSpace. Enhancement fork: Yoahoug. Additional fixes retain their PR attribution and source revisions. Licensed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE). [Archived upstream documentation](README_UPSTREAM.md) describes the older upstream release and may contain stale facts.
+Based on [CometixSpace/CCursor](https://github.com/CometixSpace/CCursor) with enhancements from [Yoahoug/CCursor-BYOK](https://github.com/Yoahoug/CCursor-BYOK); this fork adds further fixes and features. Exact source revisions are recorded in [upstream-sources.json](upstream-sources.json), the merge history in [docs/INTEGRATION.md](docs/INTEGRATION.md). Licensed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE). The archived upstream README ([EN](README_UPSTREAM.md) / [中文](README_UPSTREAM_CN.md)) describes an older upstream release and may contain stale facts.
