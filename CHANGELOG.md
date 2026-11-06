@@ -8,6 +8,20 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.3 — 同步上游 0.0.16/0.0.17（Agent Window BYOK 路由与远端拓扑守卫）
+
+对应上游 CometixSpace/CCursor `fcac85d..32f25ef`（0.0.15 → 0.0.17），剔除已随 #38/#18 整合的部分后移植以下内容：
+
+- BYOK 开关统一走幂等入口：新增 `requestByokMode`（目标值语义 + toggle 500ms 防抖），服务端补 `POST /byok/mode`，面板新增 `cursor2plus.setByokMode`；glass 侧边栏按钮按当前显示状态发送目标值，一次点击被处理两次不再「关了又开」，旧 server 404 时回落 `/byok/toggle`。
+- SSE 新增 `event: rpc-routes` 推送 ConnectRPC 规则；`pushRoutesUpdate` 改收完整 redirect 并由 `splitRedirect` 拆分，外部编辑 routes.json 时 server 进程同样推送。
+- hook payload 升至 rev3（`__byokHookRev3`）：glass 窗口命中 rpc-routes 规则的 unary / server-streaming RPC 以 Connect 协议直发本地 BYOK（仅网络不可达回落 Cursor transport），修复 Agent Window 整窗绕过扩展宿主路由的问题；同时保留本 fork 的 AvailableModels 本地短路。status/check/install 识别旧版 hook 并提示 `ccursor update`，install 在改动任何文件前提前返回。
+- `isInjectCurrent` 与本 fork 的 agent-gate 补丁共存：gate 已强制关闭 cursor_agent_host 时拓扑守卫包裹被覆盖，视为当前而非过期。
+- HTTP/1.1 路由补齐 V3 行为：每次路由判定前按 routes.json 的 mtime+size 按需重载（切换后首批请求不再用旧规则），暴露 `globalThis.__byokRpcRouted` 同进程判定接口；注入前 `stripLegacyRouterPayload` 剥离任意旧版路由块，避免直接 install 时两层 `http.request` 包装叠加。保留本 fork 的路由日志与 legacy rebind。
+- Agent Host turn 路由改为条件守卫（`agent-turn-route-guard.js`，AST 定位）：仅当 BYOK 接管 `RunSSE` 时把 `{runtime:"managed-local",reason:"eligible"}` 改走 connect，BYOK OFF 保留官方 local-loop；覆盖懒加载 chunk（3.16.29–3.18.25），有指纹找不到目标即抛错。
+- 远端窗口拓扑守卫（`agent-host-topology.js` + hook 内 `__byokAgentHostTopology`）：远端窗口且 BYOK 开时 agent host 拓扑改为 legacy；扩展声明 `cursor`/`cursorAgentHost` proposal，读取实际拓扑并在错配时提示 Reload Window。
+- `GetDynamicTools` 大结果溢写改为客户端写入：序列化只给出写盘计划（路径风格取工作区机器的 `env.osVersion`），由 `writeFileViaClient` 经 exec writeArgs 在 agent-exec 所在机器落盘，失败降级内联；`projectDir` 只取 `env.projectFolder`。修复远端/WSL 窗口本机落盘路径不存在或拼错（Issue #5 同症状）。
+- Shell `working_directory` 原样透传：新增 `shellWorkingDirectoryArg`，兼容 snake_case 声明与历史 camelCase 输入，模型指定目录不再被静默丢弃。
+
 ## 0.1.2 — 子代理提问防挂起
 
 - 用户提问仅由主代理发起；子代理遇到未决问题须将发现和阻塞原因汇报给主代理，不再直接等待用户回答。工具列表隐藏 `AskQuestion`，执行层同时拒绝旧历史或动态工具入口的遗留提问，立即返回结果而不进入交互等待；不代答、不假定用户已授权，保留主代理正常提问。

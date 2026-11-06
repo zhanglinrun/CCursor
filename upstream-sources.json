@@ -1,8 +1,8 @@
 {
   "cometix": {
     "repository": "CometixSpace/CCursor",
-    "commit": "fcac85db793fc2c8cda3318b96ec5a41c24f5e26",
-    "version": "0.0.15"
+    "commit": "32f25ef765d60049e2da54bc826076c60e09d014",
+    "version": "0.0.17"
   },
   "yoahoug": {
     "repository": "Yoahoug/CCursor-BYOK",

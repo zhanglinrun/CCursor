@@ -7,7 +7,8 @@ import { checkAlwaysLocalPatch } from './patch-always-local.js';
 import { checkAgentHostPatch } from './patch-agent-host.js';
 import { checkProxy39Patch, needsProxy39Patch } from './patch-proxy-39.js';
 import { checkAgentHostGatePatch } from './patch-agent-host-gate.js';
-import { isInjectPatched } from './patch-inject.js';
+import { isInjectCurrent, isInjectPatched } from './patch-inject.js';
+import { hasAgentHostTopology, isAgentHostTopologyGuarded, locateTopologyRhs } from './agent-host-topology.js';
 import { isGlassRefreshPatched, patchGlassModelRefresh } from './patch-glass-refresh.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
@@ -36,6 +37,22 @@ export async function check() {
       continue;
     }
     const wb = readFileSync(file, 'utf-8');
+    // 远端窗口 agent host 拓扑守卫 (3.13+): 干跑定位赋值点, 与 hook 注入同批写入
+    if (!hasAgentHostTopology(wb)) {
+      console.log(info(`Agent host topology (${label}): not present (pre-3.13, OK)`));
+    }
+    else if (isAgentHostTopologyGuarded(wb)) {
+      console.log(ok(`Agent host topology (${label}): guarded`));
+    }
+    else {
+      try {
+        console.log(ok(`Agent host topology (${label}): matchable (RHS "${locateTopologyRhs(wb, label).rhs}")`));
+      }
+      catch (error) {
+        console.log(fail(`Agent host topology (${label}): ${error.message}`));
+        allOk = false;
+      }
+    }
     if (label === 'glass') {
       try {
         if (isInjectPatched(wb) && !isGlassRefreshPatched(wb))
@@ -49,8 +66,13 @@ export async function check() {
     }
     // 与 patch-inject.js 的 ANCHORS 保持一致 —— 兼容不同版本及打包环境下
     // 包含/不包含 .js 后缀或带路径前缀的 ConnectRPC 客户端模块键。
-    if (isInjectPatched(wb)) {
+    if (isInjectCurrent(wb)) {
       console.log(ok(`Renderer hook (${label}): payload + active transport call site`));
+      continue;
+    }
+    if (isInjectPatched(wb)) {
+      console.log(fail(`Renderer hook (${label}) is outdated (installed by an older ccursor) — run "ccursor update"`));
+      allOk = false;
       continue;
     }
     if (wb.includes('__byokWrapTransport') || wb.includes('CURSOR-BYOK-HOOK-START')) {

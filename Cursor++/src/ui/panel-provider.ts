@@ -127,6 +127,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
           break
+        case 'setByokMode':
+          await vscode.commands.executeCommand('cursor2plus.setByokMode', msg.mode === 1 ? 1 : 0, 'panel')
+          break
         case 'toggleServer':
           await vscode.commands.executeCommand('cursor2plus.serverToggle')
           break

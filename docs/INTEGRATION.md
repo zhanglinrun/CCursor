@@ -1,6 +1,6 @@
 # 整合与维护记录
 
-本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前版本为 0.1.2。
+本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前版本为 0.1.3。
 
 ## 来源
 
@@ -16,6 +16,22 @@
 | #35 | 压缩边界和无收益摘要，保留拆分后的 runtime 模块及用量统计 |
 | #18 | 默认模型启用规则，并修正与 #38 Auto 解析之间的冲突 |
 | #17 | Canvas 内联 JSON 转义 |
+| CometixSpace/CCursor `fcac85d..32f25ef` (0.0.16/0.0.17) | 2026-10 上游批次,见下方「0.1.3 同步」 |
+
+## 0.1.3 同步 (0.0.16/0.0.17)
+
+按提交移植,保留本 fork 自有改动 (路由日志、legacy rebind、AvailableModels 短路、glass 原生刷新桥接、agent-gate 补丁):
+
+- `ea084a2`/`18a215d`/`95c2efd`/`7a14847` 随 #38/#18/proto 已在 0.1.0 整合,未重复移植。
+- `5525b68` SSE `event: rpc-routes` + `splitRedirect`;外部编辑 routes.json 时 server 进程同样推送。
+- `868fe81`/`0084dbf`/`a395824` 幂等 BYOK 开关 (`requestByokMode` + `/byok/mode` + `cursor2plus.setByokMode`) 与稳定后补发刷新 (`bumpRefreshSignalForModeChange`);本 fork 的 `disableStartupConnectTransport` 保留在统一入口内。
+- `c811805`/`00655b8` HTTP/1.1 路由 V3 补齐 (`ensureFresh` 按需重载 + `__byokRpcRouted` + `stripLegacyRouterPayload`)。
+- `a5fd848` hook rev2: glass 窗口 renderer 层 ConnectRPC 路由,与本地 AvailableModels 短路融合在同一 payload (rev3)。
+- `fe49f67` turn 路由条件守卫 (`agent-turn-route-guard.js`),替换 #38 旧版的无条件 connect 钉住。
+- `735fcd6`/`b0c0046`/`32f25ef` 远端拓扑守卫 (`agent-host-topology.js` + hook `__byokAgentHostTopology` + 扩展 proposal 声明与 Reload 提示)。
+- `886e189` GetDynamicTools 大结果客户端溢写 (`writeFileViaClient`);`ecc15df` Shell `working_directory` 透传 (`shellWorkingDirectoryArg`)。
+- `9627787` (EADDRINUSE 误报) 经核对本地已有等价实现,未移植;`ce935a7` (CORS 预检不计入 [GRPC] 日志 + 预检缓存 10 分钟) 为本次移植。
+- proto 未重新装载: 上游 `7a14847` 的 gen 面向 3.27.22 审计,本地 gen 与服务实现仍基于既有装载;后续跟进 Cursor 新版本时再评估。
 
 这里不是上游所有 PR 的集合。#23 改动历史持久化边界；#15、#25、#26 等独立功能没有随兼容修复默认引入。#16 涉及的陈旧说明由当前 README 替换；没有宣称接入上游 CI 或发布流程。
 
