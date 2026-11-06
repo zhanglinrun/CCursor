@@ -106,6 +106,26 @@ test('patched output is still valid JavaScript', () => {
   finally { cleanup(dir); }
 });
 
+// 回归: 拓扑守卫 (agent-host-topology.js) 先把 RHS 包成 `(globalThis.__byokAgentHostTopology?…:…)`。
+// gate 在其后运行, 若 parseExpressionAt 不保留括号, node.end 停在闭括号之前,
+// 替换后留下孤立的 `)` → 整个 bundle 语法错误, renderer 白屏 (0.1.3 实测)。
+test('RHS wrapped by the topology guard is replaced whole (no dangling paren)', () => {
+  const guardedRhs = '(/*__byokAgentHostTopology*/globalThis.__byokAgentHostTopology?globalThis.__byokAgentHostTopology(r||i):(r||i))';
+  const fixture = FIXTURE_WITH_ANCHOR.replace('r||i,t.info', `${guardedRhs},t.info`);
+  assert.notEqual(fixture, FIXTURE_WITH_ANCHOR, 'fixture must contain the guarded RHS');
+  const { dir, paths } = makePaths(fixture, null);
+  try {
+    patchAgentHostGate(paths);
+    const out = readFileSync(paths.workbenchJs, 'utf-8');
+    // 整个文件必须仍然可解析 —— 旧实现会在闭括号前截断, 留下孤立 `)`
+    assert.doesNotThrow(() => acorn.parse(out, { ecmaVersion: 'latest', sourceType: 'module' }));
+    assert.ok(out.includes(`this._agentHostEnabled=false${AGENT_HOST_GATE_MARKER},t.info`),
+      'assignment replaced whole, trailing `,t.info` preserved');
+    assert.ok(!out.includes('}),t.info(`[CursorAgentHostEnablementService'), 'no dangling paren before the log call');
+  }
+  finally { cleanup(dir); }
+});
+
 test('skips builds without the anchor (pre-3.23)', () => {
   const { dir, paths } = makePaths(FIXTURE_NO_ANCHOR, null);
   try {

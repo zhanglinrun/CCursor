@@ -129,7 +129,9 @@ function locateRhs(code, label) {
 
   let node;
   try {
-    node = acorn.parseExpressionAt(code, rhsStart, { ecmaVersion: 'latest', sourceType: 'module' });
+    // preserveParens: 拓扑守卫 (agent-host-topology.js) 会把 RHS 包成 `(globalThis.__byokAgentHostTopology?…:…)`,
+    // 不保留括号时 node.end 停在闭括号之前, 替换后留下孤立的 `)` → 整个 bundle 语法错误 (renderer 白屏)。
+    node = acorn.parseExpressionAt(code, rhsStart, { ecmaVersion: 'latest', sourceType: 'module', preserveParens: true });
   }
   catch (e) {
     throw new Error(`[agent-gate] ${label}: cannot parse RHS at offset ${rhsStart}: ${e.message}`);
