@@ -17,12 +17,17 @@ export default (router: ConnectRouter) => {
   router.service(BidiService, {
     bidiAppend: async (req) => {
       const requestId = req.requestId?.requestId
-      if (requestId && req.data) {
-        logger.info({ requestId, dataLen: req.data.length, seqno: Number(req.appendSeqno) }, '[SVC] BidiAppend')
-        appendMessage(requestId, req.data)
+      // 新版客户端（Cursor 3.29+）把消息体放在 bytes 字段 data_binary 里，
+      // 旧版放在 string 字段 data 里（hex 编码的 protobuf）。
+      // 这里统一归一化为 appendMessage 期望的 hex 字符串。
+      const hex = req.data
+        || (req.dataBinary?.length ? Buffer.from(req.dataBinary).toString('hex') : '')
+      if (requestId && hex) {
+        logger.info({ requestId, dataLen: hex.length, seqno: Number(req.appendSeqno), via: req.data ? 'data' : 'dataBinary' }, '[SVC] BidiAppend')
+        appendMessage(requestId, hex)
       }
       else {
-        logger.warn({ hasRequestId: !!requestId, hasData: !!req.data }, '[SVC] BidiAppend missing fields')
+        logger.warn({ hasRequestId: !!requestId, hasData: !!req.data, dataBinaryLen: req.dataBinary?.length ?? 0, seqno: Number(req.appendSeqno) }, '[SVC] BidiAppend missing fields')
       }
       return {}
     },
