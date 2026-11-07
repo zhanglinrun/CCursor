@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [更新日志](CHANGELOG.md) · [整合记录](docs/INTEGRATION.md)
 
-当前版本 **0.1.3** · 维护仓库 **zhanglinrun/CCursor** · 许可证 AGPL-3.0-or-later
+当前版本 **0.1.4** · 维护仓库 **zhanglinrun/CCursor** · 许可证 AGPL-3.0-or-later
 
 ## 功能
 

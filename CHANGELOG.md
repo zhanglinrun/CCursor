@@ -8,6 +8,11 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.4 — 兼容 Cursor 3.29+ 的 BidiAppend `data_binary` 消息体
+
+- 修复 Cursor 3.29 起 Agent 对话必然失败的 `[internal] Protocol error`：客户端把 Agent 消息体放进 `aiserver.v1.BidiAppendRequest` 的 bytes 字段 `data_binary`（field 4），而 `data`（field 1，string）留空。服务端只读 `data`，于是每次 `BidiAppend` 都是 `hasData:false`、消息被丢弃，`RunSSE` 在 `waitForMessage` 上永远等不到首条消息（表现为界面停在 Planning next moves，客户端最终抛可重试的协议错误）。
+- `BidiService.bidiAppend` 现在优先取 `data`，为空时回退到 `data_binary` 并转换为 hex，复用原有 `appendMessage` 解码路径。旧版客户端行为不变；日志新增 `via` 字段标明消息实际来源（`data` / `dataBinary`），便于后续版本差异排障。
+
 ## 0.1.3 — 同步上游 0.0.16/0.0.17（Agent Window BYOK 路由与远端拓扑守卫）
 
 对应上游 CometixSpace/CCursor `fcac85d..32f25ef`（0.0.15 → 0.0.17），剔除已随 #38/#18 整合的部分后移植以下内容：
