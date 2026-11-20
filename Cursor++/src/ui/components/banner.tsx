@@ -7,19 +7,33 @@ export function Banner() {
     <div
       x-show="$store.app.state"
       class="byok-banner"
-      x-bind:class="{ 'blocked': $store.app.state?.routingPatchPresent === false }"
+      x-bind:class="{
+        'blocked': $store.app.state?.routingPatchPresent === false,
+        'is-active': $store.app.state?.routingPatchPresent !== false && !!$store.app.state?.byokMode,
+      }"
     >
-      <div class="byok-label">
+      <div class="byok-status-wrap">
         <span
-          class="byok-title"
-          x-text="$store.app.state?.routingPatchPresent === false ? '需要先注入路由补丁' : $store.app.state?.byokMode ? '自有模型已启用' : '使用 Cursor 官方模型'"
+          class="byok-status-dot"
+          aria-hidden="true"
+          x-bind:class="{
+            'is-ok': $store.app.state?.routingPatchPresent !== false && !!$store.app.state?.byokMode,
+            'is-warn': $store.app.state?.routingPatchPresent === false,
+          }"
         >
         </span>
-        <span
-          class="byok-hint"
-          x-text="$store.app.state?.routingPatchPresent === false ? '注入前自有模型不会生效。点击「重新注入」，Cursor 会自动重启。' : $store.app.state?.byokMode ? '使用已配置的服务商和 API 密钥' : '请求直接转发至 Cursor 官方服务'"
-        >
-        </span>
+        <div class="byok-label">
+          <span
+            class="byok-title"
+            x-text="$store.app.state?.routingPatchPresent === false ? '需要先注入路由补丁' : $store.app.state?.byokMode ? '自有模型已启用' : '使用 Cursor 官方模型'"
+          >
+          </span>
+          <span
+            class="byok-hint"
+            x-text="$store.app.state?.routingPatchPresent === false ? '注入前自有模型不会生效。点击「重新注入」，Cursor 会自动重启。' : $store.app.state?.byokMode ? '使用已配置的服务商和 API 密钥' : '请求直接转发至 Cursor 官方服务'"
+          >
+          </span>
+        </div>
       </div>
       <div class="banner-actions">
         <button
@@ -33,7 +47,7 @@ export function Banner() {
         <button
           type="button"
           x-show="$store.app.state?.routingPatchPresent !== false"
-          x-bind:class="$store.app.state?.byokMode ? 'secondary' : ''"
+          x-bind:class="$store.app.state?.byokMode ? 'secondary banner-toggle' : 'banner-toggle'"
           x-text="$store.app.state?.byokMode ? '切换官方模式' : '启用自有模型'"
           x-on:click="$store.app.post('toggleByok')"
         >

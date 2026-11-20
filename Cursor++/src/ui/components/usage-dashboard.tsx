@@ -179,7 +179,9 @@ export function UsageDashboard() {
                         <span class="usage-row-input-inline" x-text="'输入 Token ' + $store.app.formatCount(row.promptTokens)"></span>
                       </td>
                       <td class="usage-row-input" x-text="$store.app.formatCount(row.promptTokens)" x-bind:title="row.promptTokens.toLocaleString('zh-CN')"></td>
-                      <td class="usage-row-rate" x-bind:class="'tone-' + $store.app.usageTone(row.cacheHitRate)" x-text="$store.app.formatPercent(row.cacheHitRate)"></td>
+                      <td class="usage-row-rate">
+                        <span class="usage-rate-pill" x-bind:class="'tone-' + $store.app.usageTone(row.cacheHitRate)" x-text="$store.app.formatPercent(row.cacheHitRate)"></span>
+                      </td>
                       <td class="usage-row-calls" x-text="$store.app.formatCount(row.calls)"></td>
                     </tr>
                   </template>

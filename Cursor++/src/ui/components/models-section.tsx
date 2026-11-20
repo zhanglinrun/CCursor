@@ -21,6 +21,10 @@ export function ModelsSection() {
           </div>
         </div>
         <div class="model-search">
+          <svg class="model-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4" />
+            <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          </svg>
           <input type="search" aria-label="搜索可用模型" placeholder="搜索模型名称或 ID" x-model="query" x-bind:disabled="!$store.app.remoteModels[p.id]?.models?.length" />
         </div>
         <p class="model-empty" x-show="!$store.app.remoteModels[p.id]">获取服务商提供的模型列表。</p>
@@ -72,6 +76,10 @@ export function ModelsSection() {
           </div>
         </div>
         <div class="model-search" x-show="!removing">
+          <svg class="model-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4" />
+            <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          </svg>
           <input type="search" placeholder="搜索已配置模型" aria-label="搜索已配置模型" x-model="chosenQuery" x-bind:disabled="!modelIds.length" />
         </div>
 

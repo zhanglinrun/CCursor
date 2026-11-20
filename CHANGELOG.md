@@ -8,6 +8,17 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.7 — 修复 v0.1.6 模型不显示、加速首轮启动与控制面板 UI 全面重设计
+
+- 修复 `v0.1.6` 注入后模型列表不显示的问题：`installer inject`（含 VSIX 内联的一键「重新注入」worker）在修改内置扩展后，同步将 `cursor-always-local/dist/main.js` 等文件的最新 SHA-256 写回 `extensionHostProcess.js` 的完整性哈希表，彻底解决 `anysphere.cursor-always-local` 因 `Hash mismatch` 拒绝激活导致的 `No Connect transport provider registered`。
+- 缩短 BYOK 开启时的 Connect transport / auth ready 等待预算，避免新窗口首个 Agent 回合被插件与技能市场加载阻塞 1.5~2.5 分钟；本地发布更新跟随标准 VSIX 安装目录（`~/.cursor/extensions`）。
+- 全面优化控制面板前端 UI 与布局（深/浅色宿主主题自适应）：
+  - 引入基于 `--vscode-editor-background` / `--vscode-input-background` 的清晰卡片与输入层材质，消除灰底压灰的扁平观感。
+  - 顶部状态条升级为毛玻璃粘性横幅 + 实时状态指示点；主导航与统计范围升级为分段式（Segmented Control）切换器。
+  - 仪表盘重排为紧凑卡片布局，用量指标收纳进子卡片格、缓存进度条加入平滑渐变、模型用量表命中率改用语义色胶囊徽标。
+  - 服务商列表卡片化并配品牌首字徽章；服务编辑器改用清爽高对比输入框与强调色主按钮，精简嵌套层级。
+  - 修复搜索框放大镜图标遮挡占位文字（`padding-left` 权重被全局表单规则覆盖）及激活态页签悬停变深蓝的问题。
+
 ## 0.1.6 — 标准 VSIX 安装、一键重新注入与面板入口重构
 
 - 安装形态改为 Cursor 原生「从 VSIX 安装」的标准扩展：扩展本体只落在 `~/.cursor/extensions`，不再往 Cursor 程序目录塞扩展。Cursor 升级只覆盖程序目录，扩展与服务商、模型配置（`~/.ccursor`）都保留。

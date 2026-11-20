@@ -125,7 +125,6 @@ function prepareRoutingPatches(paths) {
   // 内置扩展完整性校验：把我们改过的内置扩展文件的期望哈希同步进 n3，
   // 否则 cursor-always-local 会被判定 Hash mismatch 而拒绝激活。
   // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
-  // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
   const verifySources = new Map(writes.map(({ file, source }) => [file, source]));
   for (const file of [paths.alwaysLocalMain, paths.agentHostMain]) {
     if (file && existsSync(file) && !verifySources.has(file)) verifySources.set(file, readFileSync(file, 'utf-8'));
@@ -137,7 +136,6 @@ function prepareRoutingPatches(paths) {
   // （例如给已安装的机器补一条新子补丁），旧备份仍是干净的原始件，可以复用。
   const OWN_MARKERS = ['CURSOR-BYOK-HOOK-START', 'byokAgentHostUrlRewrite', 'BYOK-AGENT-HOST-GATE-OFF'];
   const patchedByUs = file => OWN_MARKERS.some(marker => readFileSync(file, 'utf8').includes(marker));
-  // product.json 只是校验和宿主，本身不带补丁标记，判断时排除。
   // product.json（校验和宿主）与 extensionHostProcess.js（内置扩展哈希表宿主）本身不带补丁
   // 标记，判断「补丁覆盖补丁」时排除它们；只剩这两个文件的写入也算增量更新。
   const metaFiles = new Set([paths.productJson, paths.extensionHostJs]);
@@ -158,7 +156,6 @@ function prepareRoutingPatches(paths) {
     if (mismatch) throw new Error(`Checksum mismatch for ${mismatch}. Start from a clean copy of this Cursor build.`);
   }
   return { originals, writes, targets: [...planned.keys()], reuseBackups: updatingPatchedTree };
-  return { originals, writes, targets: [...planned.keys()] };
 }
 
 function preflight() {
