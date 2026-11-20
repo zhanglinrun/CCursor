@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { createBackup, hasBackup, restoreBackup } from './backup.js';
@@ -10,6 +11,55 @@ import { prepareWorkbenchPatch } from './patch-inject.js';
 import { getProxy39Target, needsProxy39Patch, prepareProxy39Patch } from './patch-proxy-39.js';
 
 const info = message => console.log(`\x1b[34m[>]\x1b[0m ${message}`);
+/** 内置扩展完整性哈希表在 extensionHostProcess.js 里的起始锚点 */
+const VERIFY_MAP_NEEDLE = 'n3={';
+/**
+ * 内置扩展完整性校验同步。
+ *
+ * `extensionHostProcess.js` 里的 `n3` 保存每个内置扩展各文件的 sha256，扩展加载前逐个
+ * 比对。我们改了 `cursor-always-local/dist/main.js` 却不改这张表，该扩展就会被判
+ * 「Hash mismatch」拒绝激活 —— 而它正是注册 Connect transport、发 auth ready 信号的
+ * 扩展：一旦不激活，插件市场、技能同步以及新窗口的首个 Agent 回合都会卡满 Cursor 的
+ * 等待预算（实测 116~147 秒）。
+ *
+ * 这里只改被我们写入过的那几个文件的期望值，其余条目原样保留；找不到锚点就返回 null，
+ * 由调用方跳过（不阻断路由注入）。
+ */
+export function prepareVerifiedHashUpdate(paths, writes, read) {
+  if (!paths.extensionHostJs || !existsSync(paths.extensionHostJs)) return null;
+
+  const targets = [];
+  for (const { file, source } of writes) {
+    const match = /[\\/]extensions[\\/]([^\\/]+)[\\/]dist[\\/](.+)$/i.exec(file);
+    if (match) targets.push({ id: match[1], rel: match[2].replace(/\\/g, '/'), source });
+  }
+  if (targets.length === 0) return null;
+
+  const original = read(paths.extensionHostJs);
+  const mapStart = original.indexOf(VERIFY_MAP_NEEDLE);
+  if (mapStart < 0) return null;
+
+  let source = original;
+  let updated = 0;
+  for (const target of targets) {
+    // 表里的 id 带 publisher 前缀（anysphere.cursor-always-local），只匹配尾部
+    const entryAt = source.indexOf(`${target.id}":{dist:{`, mapStart);
+    if (entryAt < 0) continue;
+    const keyAt = source.indexOf(`"${target.rel}":"`, entryAt);
+    if (keyAt < 0) continue;
+    const hashStart = keyAt + `"${target.rel}":"`.length;
+    const hashEnd = source.indexOf('"', hashStart);
+    if (hashEnd < 0) continue;
+    const current = source.slice(hashStart, hashEnd);
+    if (!/^[0-9a-f]{64}$/.test(current)) continue;
+    const nextHash = createHash('sha256').update(target.source).digest('hex');
+    if (current === nextHash) continue;
+    source = source.slice(0, hashStart) + nextHash + source.slice(hashEnd);
+    updated++;
+  }
+
+  return updated > 0 ? source : null;
+}
 
 function prepareRoutingPatches(paths) {
   const originals = new Map();
@@ -67,17 +117,32 @@ function prepareRoutingPatches(paths) {
   addGroup('agent-host-gate', workbenches.map(({ path, label }) =>
     [path, prepareAgentHostGatePatch(current(path), label).source]));
 
+
   const backupTargets = new Set([
     ...originals.keys(), paths.glassJs, singleton, ...getAgentHostBackupTargets(paths),
   ]);
+
+  // 内置扩展完整性校验：把我们改过的内置扩展文件的期望哈希同步进 n3，
+  // 否则 cursor-always-local 会被判定 Hash mismatch 而拒绝激活。
+  // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
+  // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
+  const verifySources = new Map(writes.map(({ file, source }) => [file, source]));
+  for (const file of [paths.alwaysLocalMain, paths.agentHostMain]) {
+    if (file && existsSync(file) && !verifySources.has(file)) verifySources.set(file, readFileSync(file, 'utf-8'));
+  }
+  const verifiedBundles = prepareVerifiedHashUpdate(paths, [...verifySources].map(([file, source]) => ({ file, source })), read);
+  if (verifiedBundles) addGroup('inject', [[paths.extensionHostJs, verifiedBundles]]);
   // 已有备份只在「本次要写新内容、且当前文件不是我们打的补丁」时才不可信：
   // 那说明备份和本机的补丁序列对不上。已带本项目补丁标记的文件属于增量更新
   // （例如给已安装的机器补一条新子补丁），旧备份仍是干净的原始件，可以复用。
   const OWN_MARKERS = ['CURSOR-BYOK-HOOK-START', 'byokAgentHostUrlRewrite', 'BYOK-AGENT-HOST-GATE-OFF'];
   const patchedByUs = file => OWN_MARKERS.some(marker => readFileSync(file, 'utf8').includes(marker));
   // product.json 只是校验和宿主，本身不带补丁标记，判断时排除。
-  const patchWrites = writes.filter(({ file }) => file !== paths.productJson);
-  const updatingPatchedTree = patchWrites.length > 0 && patchWrites.every(({ file }) => patchedByUs(file));
+  // product.json（校验和宿主）与 extensionHostProcess.js（内置扩展哈希表宿主）本身不带补丁
+  // 标记，判断「补丁覆盖补丁」时排除它们；只剩这两个文件的写入也算增量更新。
+  const metaFiles = new Set([paths.productJson, paths.extensionHostJs]);
+  const patchWrites = writes.filter(({ file }) => !metaFiles.has(file));
+  const updatingPatchedTree = writes.length > 0 && patchWrites.every(({ file }) => patchedByUs(file));
   for (const file of backupTargets) {
     if (!hasBackup(file)) continue;
     if (updatingPatchedTree) continue;
