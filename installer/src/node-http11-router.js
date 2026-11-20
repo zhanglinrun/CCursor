@@ -13,8 +13,8 @@ import {
   ROUTES_FILE_NAME,
 } from './defaults.js';
 
-export const HTTP11_ROUTER_VERSION_MARKER = '__byokHttp11RouterV3';
-export const HTTP11_ROUTER_SOURCE_MARKER = 'BYOK-HTTP11-ROUTER-V3';
+export const HTTP11_ROUTER_VERSION_MARKER = '__byokHttp11RouterV4';
+export const HTTP11_ROUTER_SOURCE_MARKER = 'BYOK-HTTP11-ROUTER-V4';
 
 // 任意版本的路由块 (含当前版本): /* BYOK-HTTP11-ROUTER-Vn */ ... /* BYOK-HTTP11-ROUTER-Vn-END */
 const ROUTER_BLOCK_RE = /\/\* (BYOK-HTTP11-ROUTER-V\d+) \*\/[\s\S]*?\/\* \1-END \*\/\n?/g;
@@ -66,7 +66,10 @@ export function buildNodeHttp11RouterPayload({ guardMarker, processLabel }) {
       else{svcSet.add(rule);ruleCount++;}}
     return{host:host,port:port,base:baseUrl(host,port),svcSet:svcSet,methodSet:methodSet,restSet:restSet,ruleCount:ruleCount,restCount:restCount,stamp:stamp};
   }catch(e){return emptyState();}}
-  function applyState(event){state=loadConfig();console.log("[BYOK] "+PROCESS_LABEL+" "+event+" -> "+state.base+" (ConnectRPC="+state.ruleCount+", REST="+state.restCount+")");}
+  var _routeListeners=globalThis.__byokRouteListeners||(globalThis.__byokRouteListeners=new Set());
+  var _lastRunSseRouted=null;
+  globalThis.__byokOnRouteChange=function(fn){if(typeof fn!=="function")return function(){};_routeListeners.add(fn);return function(){_routeListeners.delete(fn);};};
+  function applyState(event){state=loadConfig();var runSseRouted=state.methodSet.has("agent.v1.AgentService/RunSSE")||state.svcSet.has("agent.v1.AgentService");console.log("[BYOK] "+PROCESS_LABEL+" "+event+" -> "+state.base+" (ConnectRPC="+state.ruleCount+", REST="+state.restCount+")");if(_lastRunSseRouted!==null&&_lastRunSseRouted!==runSseRouted){_lastRunSseRouted=runSseRouted;_routeListeners.forEach(function(fn){try{fn(runSseRouted);}catch(e){}});}else{_lastRunSseRouted=runSseRouted;}}
   applyState("routes loaded");
   try{_fs.watchFile(ROUTES_PATH,{interval:2000,persistent:false},function(){applyState("routes reloaded");});}catch(e){console.warn("[BYOK] "+PROCESS_LABEL+" watchFile failed: "+e.message);}
   function normalizeHost(host){return String(host||"").trim().replace(/^\\[|\\]$/g,"").toLowerCase();}

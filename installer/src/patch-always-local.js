@@ -7,6 +7,7 @@ import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { CCURSOR_DIR_NAME, ROUTES_FILE_NAME, DEFAULT_HOST, DEFAULT_PORT } from './defaults.js';
 import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched, stripLegacyRouterPayload } from './node-http11-router.js';
+import { guardAgentHttp1, isHttp1GuardPatched } from './agent-http1-guard.js';
 import { disableAgentWebSocket, hasAgentWebSocketStack, isAgentWebSocketDisabled } from './agent-websocket-guard.js';
 
 export const ALWAYS_LOCAL_ROUTER_MARKER = '__byokUrlRewrite';
@@ -42,6 +43,14 @@ export function prepareAlwaysLocalRoutingPatch(original, log) {
   patched = websocket.source;
   if (websocket.required) {
     log?.('  Legacy Agent WebSocket bypass disabled');
+  }
+
+  // 2b. Force HTTP/1.1 transport while BYOK routes RunSSE so stale cached serverConfig
+  //     cannot leave HTTP/2 aimed at the HTTP/1.1 local BYOK server.
+  const http1 = guardAgentHttp1(patched);
+  if (http1.changed) {
+    patched = http1.source;
+    log?.('  Legacy Agent HTTP/1.1 transport guarded (BYOK → HTTP/1.1)');
   }
 
   // 3. Wait for the Cursor++ server before the legacy Agent transport starts.
@@ -94,13 +103,15 @@ export function inspectAlwaysLocalPatch(paths) {
   const wait = hasActivateWait(source);
   const websocketRequired = hasAgentWebSocketStack(source);
   const websocketDisabled = isAgentWebSocketDisabled(source, 'cursor-always-local main.js');
+  const http1Guarded = isHttp1GuardPatched(source);
   return {
     present: true,
     router,
     wait,
     websocketRequired,
     websocketDisabled,
-    fullyPatched: router && wait && websocketDisabled,
+    http1Guarded,
+    fullyPatched: router && wait && websocketDisabled && http1Guarded,
   };
 }
 

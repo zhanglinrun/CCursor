@@ -8,6 +8,13 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.8 — 修复 Agent Host HTTP/2 协议错误（`ERR_HTTP2_ERROR`）
+
+- 修复 Cursor 3.31+（以及刚从官方模式切回 BYOK 时）发送消息报 `Server error` / `ConnectError: [internal] Protocol error (ERR_HTTP2_ERROR, errno: -505)` 的问题：
+  - 根因：Cursor 启动后仅每 10 分钟刷新一次 `serverConfig.http2Config`，且凭据更新（`creds`）重建传输时不会重读该配置；若缓存中仍为官方默认值且用户未手动开启 `cursor.general.disableHttp2`，`cursor-agent-host` 会对仅支持 HTTP/1.1 的本地 BYOK 服务（`127.0.0.1:39831`）发起 HTTP/2 连接导致立刻断连。
+  - 修复：新增 `agent-http1-guard.js`，在 BYOK 接管 `agent.v1.AgentService/RunSSE` 期间让 `isHttp2Disabled()` 直接返回 `true`（切回官方模式时原样恢复官方 HTTP/2）；同时升级 HTTP/1.1 路由块至 `V4`，暴露 `__byokOnRouteChange` 钩子，运行时切换 BYOK 开关自动重建 transport 无需重启 Cursor。
+  - 补全 `inject.js` 增量覆盖守卫的自有补丁标记列表（`__byokUrlRewrite` / `__byokSingletonUrlRewrite` / `BYOK-HTTP11-ROUTER-`），确保已注入机器一键「重新注入」平滑升级。
+
 ## 0.1.7 — 修复 v0.1.6 模型不显示、加速首轮启动与控制面板 UI 全面重设计
 
 - 修复 `v0.1.6` 注入后模型列表不显示的问题：`installer inject`（含 VSIX 内联的一键「重新注入」worker）在修改内置扩展后，同步将 `cursor-always-local/dist/main.js` 等文件的最新 SHA-256 写回 `extensionHostProcess.js` 的完整性哈希表，彻底解决 `anysphere.cursor-always-local` 因 `Hash mismatch` 拒绝激活导致的 `No Connect transport provider registered`。

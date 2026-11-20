@@ -14,6 +14,7 @@ import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { hasActivateWait, injectActivateWait } from './patch-always-local.js';
 import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched, stripLegacyRouterPayload } from './node-http11-router.js';
+import { guardAgentHttp1, isHttp1GuardPatched } from './agent-http1-guard.js';
 import { assertTurnRouteShape, guardTurnRoute, isTurnRouteGuarded, mayContainTurnRoute } from './agent-turn-route-guard.js';
 import {
   AGENT_WS_GATE_MARKER,
@@ -135,11 +136,18 @@ export function prepareAgentHostPatch(paths, log) {
   let websocketTargets = 0;
   for (const file of networkTargets) {
     const source = patchedByFile.get(file);
-    if (!hasAgentWebSocketStack(source)) continue;
-    websocketTargets++;
-    const disabled = disableAgentWebSocket(source, basename(file));
-    patchedByFile.set(file, disabled.source);
-    log?.(`  Agent WebSocket disabled in content-matched chunk: ${basename(file)}`);
+    let next = source;
+    if (hasAgentWebSocketStack(next)) {
+      websocketTargets++;
+      next = disableAgentWebSocket(next, basename(file)).source;
+      log?.(`  Agent WebSocket disabled in content-matched chunk: ${basename(file)}`);
+    }
+    const http1 = guardAgentHttp1(next);
+    if (http1.changed) {
+      next = http1.source;
+      log?.(`  Agent HTTP/1.1 transport guarded (BYOK → HTTP/1.1): ${basename(file)}`);
+    }
+    patchedByFile.set(file, next);
   }
 
   // Turn 路由守卫 (3.16.29+): BYOK 接管 RunSSE 时把 managed-local eligible 改走 connect。
@@ -245,20 +253,23 @@ export function inspectAgentHostPatch(paths) {
 
   const websocketTargets = [];
   let websocketDisabled = true;
+  let http1Guarded = true;
   for (const file of networkTargets) {
     try {
       const source = readFileSync(file, 'utf-8');
+      if (!isHttp1GuardPatched(source)) http1Guarded = false;
       if (!hasAgentWebSocketStack(source)) continue;
       websocketTargets.push(file);
       if (!isAgentWebSocketDisabled(source, basename(file))) websocketDisabled = false;
     }
     catch (error) {
       websocketDisabled = false;
+      http1Guarded = false;
       errors.push(error.message);
     }
   }
 
-  const fullyPatched = packageValid && entryValid && router && wait && turnRoute
+  const fullyPatched = packageValid && entryValid && router && wait && turnRoute && http1Guarded
     && networkTargets.length > 0 && websocketDisabled && errors.length === 0;
   return {
     present: true,
@@ -269,6 +280,7 @@ export function inspectAgentHostPatch(paths) {
     wait,
     turnRoute,
     turnRouteRequired,
+    http1Guarded,
     networkTargets,
     websocketTargets,
     websocketDisabled,

@@ -134,7 +134,14 @@ function prepareRoutingPatches(paths) {
   // 已有备份只在「本次要写新内容、且当前文件不是我们打的补丁」时才不可信：
   // 那说明备份和本机的补丁序列对不上。已带本项目补丁标记的文件属于增量更新
   // （例如给已安装的机器补一条新子补丁），旧备份仍是干净的原始件，可以复用。
-  const OWN_MARKERS = ['CURSOR-BYOK-HOOK-START', 'byokAgentHostUrlRewrite', 'BYOK-AGENT-HOST-GATE-OFF'];
+  const OWN_MARKERS = [
+    'CURSOR-BYOK-HOOK-START',
+    'byokAgentHostUrlRewrite',
+    '__byokUrlRewrite',
+    '__byokSingletonUrlRewrite',
+    'BYOK-HTTP11-ROUTER-',
+    'BYOK-AGENT-HOST-GATE-OFF',
+  ];
   const patchedByUs = file => OWN_MARKERS.some(marker => readFileSync(file, 'utf8').includes(marker));
   // product.json（校验和宿主）与 extensionHostProcess.js（内置扩展哈希表宿主）本身不带补丁
   // 标记，判断「补丁覆盖补丁」时排除它们；只剩这两个文件的写入也算增量更新。
