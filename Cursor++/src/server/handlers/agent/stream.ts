@@ -66,6 +66,7 @@ import {
   WebSearchToolCallSchema,
 } from '../../gen/agent_v1_pb'
 import { logger, streamLogger } from '../../logger'
+import { cachedBlobPayloadBytes } from './blob'
 import { AGENT_HEARTBEAT_INTERVAL_MS, IDLE_HINT_AFTER_MS } from './constants'
 import { mapPartialToolName } from './tools'
 
@@ -471,10 +472,8 @@ export function kvGetBlob(id: number, blobId: Uint8Array): AgentServerMessage {
  * - system scaffold blob 使用 id=0 (proto scalar default，JSON 中通常省略)
  * - 首个 ordered blob 从 id=1 开始
  *
- * blobData 分两种场景:
- *   - JSON blob (encodeBlob): base64 文本 → TextEncoder.encode → 客户端按原样存储
- *   - Protobuf blob (encodeBinaryBlob): blobDataRaw 直接传 raw protobuf bytes，
- *     客户端存 raw bytes，fork 时 fromBinary 可直接解析
+ * blobData 是本地 cache 的 base64。KV 发送解码后的 UTF-8 JSON，
+ * protobuf blob 的 blobDataRaw 则原样发送（fork 时客户端使用 fromBinary）。
  *
  * blobId 始终存的是 base64 文本的 UTF-8 字节（sha256 hash 的 base64 表示），
  * 与 checkpoint.turns / turn 内部引用保持一致。
@@ -489,7 +488,7 @@ export function kvMessage(id: number | undefined, blobId: string, blobData: stri
           case: 'setBlobArgs',
           value: {
             blobId: new TextEncoder().encode(blobId),
-            blobData: blobDataRaw ?? new TextEncoder().encode(blobData),
+            blobData: blobDataRaw ?? cachedBlobPayloadBytes(blobData),
           },
         } as any,
       }),

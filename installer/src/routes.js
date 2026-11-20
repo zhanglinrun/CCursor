@@ -44,7 +44,7 @@ function mergeWithDefaults(loaded) {
       port: loaded.collector?.port ?? fallback.collector.port,
     },
     redirect: Array.isArray(loaded.redirect) && loaded.redirect.length > 0
-      ? loaded.redirect.slice()
+      ? loaded.redirect.filter(route => route !== 'aiserver.v1.DashboardService/GetEffectiveUserPlugins')
       : fallback.redirect,
   };
 }

@@ -4,6 +4,7 @@ import { getPersistedConversationCheckpoint } from '../../database/checkpoints'
 import { logger } from '../../logger'
 import { warmupBlobsAsync } from './blobStore'
 import { handleConversationRun } from './conversationRuntime'
+import { migrateLegacyRootBlobs } from './historyManager'
 import { collectExtraContextBlobIds, parseRunRequest, resolveExtraContextBlobs } from './protocol'
 import {
   applyMcpsPart,
@@ -16,7 +17,9 @@ import {
   fetchSubagentsPart,
 } from './requestContextParts'
 import { handleSummarizeAction } from './summarizeRuntime'
-import { isAgentRunAbortedError } from './wait'
+import { isAgentRunAbortedError, throwIfSessionCancelled } from './wait'
+
+export const AUXILIARY_KV_REQUEST_START = 900_000
 
 export async function* handleRunRequest(
   msg: Record<string, unknown>,
@@ -25,9 +28,11 @@ export async function* handleRunRequest(
   const parsed = parseRunRequest(msg)
   // kvGetBlob 请求 id — 与 conversationRuntime 的 blobCounter 相互独立。
   // 用高位起始值避开后者(从 0 递增)的取值区间,防止 id 撞号。
-  let nextBlobRequestId = 900_000
+  let nextBlobRequestId = AUXILIARY_KV_REQUEST_START
 
   try {
+    if (session)
+      throwIfSessionCancelled(session)
     const persistedCheckpoint = await getPersistedConversationCheckpoint(parsed.conversationId)
     if (persistedCheckpoint) {
       // 客户端是 source of truth。sqlite checkpoint 仅用于 auto-summarize 持久化,
@@ -72,6 +77,8 @@ export async function* handleRunRequest(
     if (extraContextBlobIds.length > 0) {
       resolveExtraContextBlobs(parsed)
     }
+    if (session)
+      throwIfSessionCancelled(session)
 
     // Cursor 3.13+ ref_only: 四类稳定上下文分别位于客户端 transient blob。
     // 严格串行取回可兼容旧客户端不回 getBlobResult.id 的行为；dual 模式在
@@ -113,18 +120,19 @@ export async function* handleRunRequest(
         applyMcpsPart(parsed, mcpsPart)
     }
 
-    if (parsed.isSummarize) {
-      yield* handleSummarizeAction(parsed, session)
-      return
-    }
-
     const hasUserContent = parsed.userText || parsed.selectedImages.length > 0
-    if (!hasUserContent && !parsed.isResume && !parsed.isExecutePlan && !parsed.isBackgroundTaskCompletion) {
+    if (!parsed.isSummarize && !hasUserContent && !parsed.isResume && !parsed.isExecutePlan && !parsed.isBackgroundTaskCompletion) {
       logger.warn({ keys: Object.keys(msg) }, '[AGENT] runRequest without userText/images, resume, executePlan, summarizeAction, or backgroundTaskCompletionAction')
       return
     }
 
-    yield* handleConversationRun(parsed, session)
+    const migrated = yield* migrateLegacyRootBlobs(parsed.historyBlobIds, session, nextBlobRequestId - 1)
+    parsed.historyBlobIds = migrated.blobIds
+
+    if (parsed.isSummarize)
+      yield* handleSummarizeAction(parsed, session)
+    else
+      yield* handleConversationRun(parsed, session)
   }
   catch (error) {
     if (isAgentRunAbortedError(error)) {
@@ -132,7 +140,7 @@ export async function* handleRunRequest(
         conversationId: parsed.conversationId,
         execMessageId: error.execMessageId,
         error: error.message,
-      }, '[AGENT] run aborted by client exec control message')
+      }, '[AGENT] run aborted by client')
       return
     }
     throw error

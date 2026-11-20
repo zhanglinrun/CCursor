@@ -3,6 +3,7 @@ import type { resolveProviderRuntime } from '../llm'
 import type { LLMMessage, LLMStreamRequest } from '../llm/types'
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
+import { openProviderStream } from '../llm/providerStream'
 import { estimateRequestTokens } from './compactionStrategy'
 import { summary } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
@@ -69,12 +70,12 @@ export async function* generateModelSummary(params: {
       if (session)
         throwIfSessionCancelled(session)
       const request = makeRequest(chunk)
-      const stream = route.provider.stream(request)[Symbol.asyncIterator]()
+      const stream = openProviderStream(route.provider, request, session?.abortController.signal)
       let text = ''
       let completed = false
       try {
         while (true) {
-          const next = yield* waitForPromiseWithHeartbeat(stream.next())
+          const next = yield* waitForPromiseWithHeartbeat(stream.events.next())
           if (session)
             throwIfSessionCancelled(session)
           if (next.done)
@@ -84,6 +85,7 @@ export async function* generateModelSummary(params: {
             if (event.stopReason !== 'end_turn')
               throw new Error(`Summary did not complete: ${event.stopReason}`)
             completed = true
+            break
           }
           if (event.type === 'text_delta') {
             text += event.text
@@ -91,8 +93,13 @@ export async function* generateModelSummary(params: {
           }
         }
       }
+      catch (error) {
+        if (session)
+          throwIfSessionCancelled(session)
+        throw error
+      }
       finally {
-        await stream.return?.()
+        stream.close()
       }
       if (!completed || !text.trim())
         throw new Error('Model returned an empty or incomplete summary; history preserved.')

@@ -134,9 +134,10 @@ export class AnthropicProvider implements LLMProvider {
     if (request.anthropicBetas)
       betas.push(...request.anthropicBetas.filter(b => !betas.includes(b)))
 
+    const options = { signal: request.signal }
     const stream = betas.length > 0
-      ? this.client.beta.messages.stream({ ...params, betas } as any)
-      : this.client.messages.stream(params)
+      ? this.client.beta.messages.stream({ ...params, betas } as any, options)
+      : this.client.messages.stream(params, options)
     const contentBlocks = new Map<number, { type: string, id?: string, name?: string, signature?: string }>()
 
     for await (const event of stream) {

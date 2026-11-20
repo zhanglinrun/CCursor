@@ -100,7 +100,9 @@ export function estimateMessagesTokens(messages: Array<LLMMessage | { role: stri
 /** 请求估算不省略动态工具结果，且把工具定义与消息封装一同计入。 */
 export function estimateRequestTokens(messages: LLMMessage[], tools: LLMTool[] = []): number {
   let imageTokens = 0
-  const serialized = JSON.stringify({ messages, ...(tools.length ? { tools } : {}) }, (_key, value) => {
+  const serialized = JSON.stringify({ messages, ...(tools.length ? { tools } : {}) }, function (key, value) {
+    if (key === 'toolResult' && (this.role === 'tool' || this.type === 'tool_result'))
+      return undefined
     if (value && typeof value === 'object' && value.type === 'image') {
       imageTokens += 1600 // shortcut: 图像按固定保守值估算，实际 usage 可纠正；不是模型精确图像计费。
       return { type: 'image', mimeType: value.mimeType }

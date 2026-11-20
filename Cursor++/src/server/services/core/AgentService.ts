@@ -22,14 +22,16 @@
  * 突然结束, 没有 banner。这里的修复是此功能的必要前置。
  */
 import type { ConnectRouter } from '@connectrpc/connect'
+import type { AgentSession } from '../../handlers/agent/session'
 import { toJson } from '@bufbuild/protobuf'
 import { ConnectError } from '@connectrpc/connect'
 import { AgentClientMessageSchema, AgentService } from '../../gen/agent_v1_pb'
 import { ErrorDetails_Error } from '../../gen/aiserver_v1_shared_pb'
-import { handleRunRequest } from '../../handlers/agent/agentOrchestrator'
+import { AUXILIARY_KV_REQUEST_START, handleRunRequest } from '../../handlers/agent/agentOrchestrator'
 import { cacheBlob } from '../../handlers/agent/blobStore'
 import { registerCloneLineage } from '../../handlers/agent/cloneRegistry'
-import { closeSession, createEphemeralSession, getOrCreateSession, markSessionClosed, pushSessionMessage, waitForMessage } from '../../handlers/agent/session'
+import { closeSession, createEphemeralSession, getOrCreateSession, markSessionClosed, markSessionInputClosed, pushSessionMessage, waitForMessage } from '../../handlers/agent/session'
+import { isAgentRunAbortedError, throwIfSessionCancelled } from '../../handlers/agent/wait'
 import { makeByokConnectError, makeModelNotFoundError, makeProviderError } from '../../handlers/errors'
 import { ModelNotFoundError } from '../../handlers/models/mapper'
 import { logger } from '../../logger'
@@ -59,17 +61,27 @@ function isStreamDestroyedError(error: unknown): boolean {
     || error.message.includes('ERR_STREAM_DESTROYED')
 }
 
+function bindSessionToTransport(session: AgentSession, signal: AbortSignal): () => void {
+  session.nextCompactionBlobRequestId = 2_000_000
+  const onAbort = () => markSessionClosed(session)
+  if (signal.aborted)
+    onAbort()
+  else
+    signal.addEventListener('abort', onAbort, { once: true })
+  return () => signal.removeEventListener('abort', onAbort)
+}
+
 export default (router: ConnectRouter) => {
   router.service(AgentService, {
     /** Bidi streaming (HTTP/2) */
-    async* run(requests) {
+    async* run(requests, context) {
       logger.info('[SVC] AgentService/Run bidi started')
 
       const iterator = requests[Symbol.asyncIterator]()
       let firstMsg: Record<string, unknown> | null = null
       let bidiQueuedUserText: string | undefined
 
-      while (true) {
+      while (!context.signal.aborted) {
         const next = await iterator.next()
         if (next.done)
           return
@@ -101,24 +113,38 @@ export default (router: ConnectRouter) => {
           break
         }
       }
+      if (!firstMsg || context.signal.aborted)
+        return
 
       const session = createEphemeralSession(`bidi-${Date.now()}`)
-      const pump = (async () => {
+      const unbindTransport = bindSessionToTransport(session, context.signal)
+      const pump = async () => {
         try {
-          while (true) {
+          while (!session.abortController.signal.aborted) {
             const next = await iterator.next()
-            if (next.done)
-              break
-            const msg = toJson(AgentClientMessageSchema, next.value) as Record<string, unknown>
-            if ('clientHeartbeat' in msg || 'kvClientMessage' in msg)
+            if (next.done) {
+              markSessionInputClosed(session)
+              return
+            }
+            if (session.abortController.signal.aborted)
+              return
+            const message = next.value.message
+            if (message.case === 'clientHeartbeat')
               continue
-            pushSessionMessage(session, msg)
+            if (message.case === 'kvClientMessage' && message.value.message.case === 'setBlobResult'
+              && message.value.id < AUXILIARY_KV_REQUEST_START) {
+              continue
+            }
+            pushSessionMessage(session, toJson(AgentClientMessageSchema, next.value) as Record<string, unknown>)
           }
         }
-        finally {
+        catch (error) {
           markSessionClosed(session)
+          if (!context.signal.aborted)
+            logger.warn({ error: (error as Error).message }, '[SVC] Run bidi pump error')
         }
-      })()
+      }
+      void pump()
 
       try {
         for await (const frame of handleRunRequest(firstMsg, session)) {
@@ -127,7 +153,7 @@ export default (router: ConnectRouter) => {
       }
       catch (error) {
         // 用户中断对话 → stream 已销毁, yield 写入失败 — 正常退出, 不触发 retry banner
-        if (isStreamDestroyedError(error)) {
+        if (context.signal.aborted || isAgentRunAbortedError(error) || isStreamDestroyedError(error)) {
           logger.info({ sessionId: session?.requestId }, '[SVC] Run bidi stream destroyed (client abort)')
           return
         }
@@ -142,15 +168,15 @@ export default (router: ConnectRouter) => {
         throw connErr
       }
       finally {
+        unbindTransport()
         markSessionClosed(session)
-        await pump.catch((e) => {
-          logger.warn({ error: (e as Error).message }, '[SVC] Run bidi pump error')
-        })
+        // The client can leave its request stream open while waiting for our response to end.
+        void Promise.resolve().then(() => iterator.return?.()).catch(() => {})
       }
     },
 
     /** Server streaming SSE (HTTP/1.1 降级) */
-    async* runSSE(req) {
+    async* runSSE(req, context) {
       const requestId = req.requestId
       if (!requestId) {
         // 缺 requestId 无法关联到 bidi session, 走静默 return 让 SSE 正常结束。
@@ -161,9 +187,11 @@ export default (router: ConnectRouter) => {
 
       logger.info({ requestId }, '[SVC] AgentService/RunSSE started')
       const session = getOrCreateSession(requestId)
+      const unbindTransport = bindSessionToTransport(session, context.signal)
 
       try {
         const firstMsg = await waitForMessage(session)
+        throwIfSessionCancelled(session)
         if (!firstMsg) {
           // Session 建立后没等到首条消息 —— 通常是 BidiAppend 协调慢或客户端问题。
           // 也构造一个 ErrorDetails 让客户端 banner 提示, 可 retry。
@@ -191,6 +219,7 @@ export default (router: ConnectRouter) => {
           queuedUserText = typeof um?.text === 'string' && um.text ? um.text : undefined
           logger.info({ requestId, queuedUserText: queuedUserText?.slice(0, 80) }, '[SVC] RunSSE got conversationAction before runRequest — waiting for runRequest')
           const nextMsg = await waitForMessage(session)
+          throwIfSessionCancelled(session)
           if (!nextMsg || !('runRequest' in nextMsg)) {
             logger.warn({ requestId, nextMsgKeys: nextMsg ? Object.keys(nextMsg) : null }, '[SVC] RunSSE never received runRequest after conversationAction')
             return
@@ -219,7 +248,7 @@ export default (router: ConnectRouter) => {
       }
       catch (error) {
         // 用户中断对话 → stream 已销毁, yield 写入失败 — 正常退出
-        if (isStreamDestroyedError(error)) {
+        if (context.signal.aborted || isAgentRunAbortedError(error) || isStreamDestroyedError(error)) {
           logger.info({ requestId }, '[SVC] RunSSE stream destroyed (client abort)')
           return
         }
@@ -238,6 +267,7 @@ export default (router: ConnectRouter) => {
         throw connErr
       }
       finally {
+        unbindTransport()
         closeSession(requestId)
       }
     },

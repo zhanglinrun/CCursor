@@ -27,6 +27,8 @@ export interface RemoteModelEntry {
   ownedBy: string
   /** 排序用的毫秒时间戳；上游没给就是 0 */
   createdAt: number
+  contextTokenLimit?: number
+  maxOutputTokens?: number
   /** Backend resolves metadata without replacing the endpoint's model id. */
   catalog?: CatalogEntry
 }
@@ -37,6 +39,14 @@ function firstNonEmptyString(...candidates: unknown[]): string {
       return candidate.trim()
   }
   return ''
+}
+
+function firstPositiveLimit(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const limit = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value
+    if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0)
+      return limit
+  }
 }
 
 /**
@@ -97,12 +107,18 @@ export function normalizeRemoteModels(payload: unknown): RemoteModelEntry[] {
     if (!id)
       continue
 
+    const topProvider = record.top_provider as Record<string, unknown> | undefined
+    const limits = record.limit as Record<string, unknown> | undefined
+    const contextTokenLimit = firstPositiveLimit(record.context_length, record.context_window, record.max_model_len, record.inputTokenLimit, record.input_token_limit, topProvider?.context_length, limits?.context)
+    const maxOutputTokens = firstPositiveLimit(record.outputTokenLimit, record.output_token_limit, record.max_output_tokens, record.max_completion_tokens, topProvider?.max_completion_tokens, limits?.output)
     entries.push({
       id,
       // 只在 id 被混淆时 display_name 才真正救命，但字段名两种写法都得认
       displayName: firstNonEmptyString(record.display_name, record.displayName),
       ownedBy: firstNonEmptyString(record.owned_by, record.ownedBy),
       createdAt: parseTimestamp(record.created ?? record.created_at ?? record.createdAt),
+      ...(contextTokenLimit === undefined ? {} : { contextTokenLimit }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
     })
   }
 

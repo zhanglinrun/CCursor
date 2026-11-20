@@ -20,17 +20,12 @@ export function isAgentRunAbortedError(error: unknown): error is AgentRunAborted
   return error instanceof AgentRunAbortedError
 }
 
-/**
- * 客户端已发 cancelAction 则抛出中断,把控制权交回 conversationRuntime /
- * agentOrchestrator 的 isAgentRunAbortedError 分支干净收尾。
- *
- * 放在每个可能长时间停留的位置调用: 工具等待返回后、LLM 流每个事件、
- * round 边界。中断粒度因此收敛到单个事件而非整轮。
- */
+/** Normalize client cancel actions and transport disconnects as clean run termination. */
 export function throwIfSessionCancelled(session: AgentSession): void {
-  if (session.cancelledReason === undefined)
-    return
-  throw new AgentRunAbortedError(`client cancelled the run: ${session.cancelledReason}`)
+  if (session.cancelledReason !== undefined)
+    throw new AgentRunAbortedError(`client cancelled the run: ${session.cancelledReason}`)
+  if (session.abortController.signal.aborted)
+    throw new AgentRunAbortedError('client disconnected from the run')
 }
 
 export function isExecClientMessageForId(msg: Record<string, unknown>, execMessageId: number): boolean {

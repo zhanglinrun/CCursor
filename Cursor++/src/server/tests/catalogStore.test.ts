@@ -99,6 +99,25 @@ it('refreshes atomically, shares in-flight requests, updates counts/search and p
   expect(store().getStatus()).toMatchObject({ source: 'cache', modelCount: 2, updatedAt })
 })
 
+it('refreshes stale metadata on use, coalesces requests, and backs off after a failure', async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(Response.json(catalog('gpt-6.2-sol')))
+  let now = Date.parse(updatedAt)
+  const catalogStore = store(fetchImpl, { now: () => new Date(now) })
+  expect(catalogStore.refreshIfStale()).toBeUndefined()
+  now += 60 * 60_000
+  const refresh = catalogStore.refreshIfStale()
+  expect(catalogStore.refreshIfStale()).toBe(refresh)
+  expect((await refresh)?.lastError).toBe('offline')
+  expect(catalogStore.refreshIfStale()).toBeUndefined()
+  expect(catalogStore.match('unique-old-model')).toBeDefined()
+  now += 5 * 60_000
+  expect((await catalogStore.refreshIfStale())?.source).toBe('remote')
+  expect(catalogStore.match('gpt-6.2-sol')?.id).toBe('gpt-6.2-sol')
+  expect(fetchImpl).toHaveBeenCalledTimes(2)
+})
+
 describe('last-good preservation', () => {
   it.each([
     ['network', () => Promise.reject(new Error('offline'))],

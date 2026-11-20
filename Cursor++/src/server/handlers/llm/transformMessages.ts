@@ -384,6 +384,7 @@ function explodeLegacyUserToolResults(messages: LLMMessage[], diagnostics?: Repa
           toolName: block.toolName,
           content: block.content,
           ...(block.isError ? { isError: true } : {}),
+          ...(block.toolResult ? { toolResult: block.toolResult } : {}),
         })
       }
       else {

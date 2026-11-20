@@ -2,7 +2,7 @@
  * Agent Session 管理
  *
  * SSE 降级模式下，Client 通过两个独立通道通信:
- *   - BidiAppend (unary) — 发送 AgentClientMessage (data=base64 proto)
+ *   - BidiAppend (unary) — 发送 AgentClientMessage（旧版 hex 或原始 protobuf bytes）
  *   - RunSSE (server_streaming) — 接收 AgentServerMessage 流
  *
  * 两者通过 requestId 关联。Session 维护一个 per-requestId 的消息队列，
@@ -45,6 +45,9 @@ export interface AgentSession {
   notify: (() => void) | null
   listeners: Set<() => void>
   closed: boolean
+  readonly abortController: AbortController
+  /** Request IDs reserved for confirmed compaction writes on a live transport. */
+  nextCompactionBlobRequestId?: number
   /**
    * 后台 job 注册表 (key = task_id 字符串形式: shell 用 shellId, subagent 用 agentId)。
    * 转后台时登记, AwaitShell 据此分流 readArgs / subagentAwaitArgs。
@@ -57,12 +60,8 @@ export interface AgentSession {
    *
    * 客户端中断当前生成 (点停止、提交新消息抢占、steer 降级后升级为 interrupt)
    * 时,ControlledConversationActionManager.abort() 会往同一条 BiDi 客户端流
-   * 发 ConversationAction{cancelAction},随后才本地 abort。这是服务端唯一能
-   * 感知"该停了"的信号 —— 不消费它,旧 run 会一直跑到 LLM 流自然结束,
-   * 表现为"发新消息时前一条没有被终止"。
-   *
-   * 与 closed 的区别: closed 是传输层断开,cancelled 是应用层中断,
-   * 后者到达时连接仍然活着(客户端还要用它接收后续帧)。
+   * 发 ConversationAction{cancelAction},随后才本地 abort。
+   * closed 也用于 Run 客户端半关闭请求流。abortController 表示用户取消或传输断开。
    */
   cancelledReason?: string
 }
@@ -74,6 +73,7 @@ export function createEphemeralSession(requestId: string): AgentSession {
     notify: null,
     listeners: new Set(),
     closed: false,
+    abortController: new AbortController(),
     backgroundJobs: new Map(),
   }
 }
@@ -132,6 +132,7 @@ function ingestSessionMessage(session: AgentSession, json: Record<string, unknow
     // 只认第一次 —— 客户端可能重复发,reason 以最先到达的为准
     if (session.cancelledReason === undefined) {
       session.cancelledReason = cancelReason
+      session.abortController.abort()
       logger.info({ requestId: session.requestId, reason: cancelReason }, '[CANCEL] client cancelled the run')
     }
   }
@@ -166,8 +167,15 @@ export function pushSessionMessage(session: AgentSession, json: Record<string, u
   ingestSessionMessage(session, json)
 }
 
+/** A Run caller can half-close its request stream and continue reading the response. */
+export function markSessionInputClosed(session: AgentSession): void {
+  session.closed = true
+  notifyAll(session)
+}
+
 export function markSessionClosed(session: AgentSession): void {
   session.closed = true
+  session.abortController.abort()
   notifyAll(session)
 }
 
@@ -185,21 +193,19 @@ export function getOrCreateSession(requestId: string): AgentSession {
 }
 
 /** BidiAppend 调用时，将消息推入 session 队列 */
-export function appendMessage(requestId: string, data: string): void {
-  const session = getOrCreateSession(requestId)
-
-  // data 是 proto string 类型，实际承载的是 protobuf binary 的 hex 字符串表示。
-  // "0ad88200a00012..." → hex decode → protobuf bytes
+export function appendMessage(requestId: string, bytes: Uint8Array): void {
   try {
-    const bytes = Buffer.from(data, 'hex')
     const clientMsg = fromBinary(AgentClientMessageSchema, bytes)
+    if (!clientMsg.message.case) {
+      logger.warn({ requestId, protoBytes: bytes.length }, '[SESSION] empty AgentClientMessage')
+      return
+    }
     const json = toJson(AgentClientMessageSchema, clientMsg) as Record<string, unknown>
-    const keys = Object.keys(json)
-    logger.info({ requestId, keys, protoBytes: bytes.length }, '[SESSION] appendMessage')
-    ingestSessionMessage(session, json)
+    logger.info({ requestId, keys: Object.keys(json), protoBytes: bytes.length }, '[SESSION] appendMessage')
+    ingestSessionMessage(getOrCreateSession(requestId), json)
   }
   catch (e) {
-    logger.warn({ requestId, dataLen: data.length, error: (e as Error).message }, '[SESSION] proto decode failed')
+    logger.warn({ requestId, protoBytes: bytes.length, error: (e as Error).message }, '[SESSION] proto decode failed')
   }
 }
 
@@ -301,8 +307,7 @@ export async function waitForInteractionResponse(
 export function closeSession(requestId: string): void {
   const session = sessions.get(requestId)
   if (session) {
-    session.closed = true
-    notifyAll(session)
+    markSessionClosed(session)
     sessions.delete(requestId)
     logger.debug({ requestId }, '[SESSION] closed')
   }

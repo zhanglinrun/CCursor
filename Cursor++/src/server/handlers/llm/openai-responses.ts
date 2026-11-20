@@ -85,7 +85,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       params.include = ['reasoning.encrypted_content']
     }
 
-    const stream = await this.client.responses.create(params)
+    const stream = await this.client.responses.create(params, { signal: request.signal })
 
     // 跟踪活跃的 function_call items (item_id → { callId, name, hadDeltas })
     const activeCalls = new Map<string, { callId: string, name: string, hadDeltas: boolean }>()
@@ -142,9 +142,14 @@ export class OpenAIResponsesProvider implements LLMProvider {
           break
         }
 
-        // ── 完成 ──
-        case 'response.completed': {
+        // Both terminal events can include usage, and some relays send an incomplete status in a completed event.
+        case 'response.completed':
+        case 'response.incomplete': {
           const r = event.response
+          const incomplete = event.type === 'response.incomplete' || r.status === 'incomplete'
+          const stopReason = incomplete
+            ? (r.incomplete_details?.reason === 'content_filter' ? 'content_filter' : 'max_tokens')
+            : (sawToolCalls ? 'tool_use' : 'end_turn')
           const cachedTokens = r.usage?.input_tokens_details?.cached_tokens ?? 0
           if (cachedTokens) {
             logger.info({
@@ -155,33 +160,20 @@ export class OpenAIResponsesProvider implements LLMProvider {
           }
           yield {
             type: 'done',
-            stopReason: sawToolCalls
-              ? 'tool_use'
-              : r.status === 'incomplete'
-                ? 'max_tokens'
-                : 'end_turn',
+            stopReason,
             usage: {
               inputTokens: r.usage?.input_tokens ?? 0,
               outputTokens: r.usage?.output_tokens ?? 0,
               cacheReadTokens: cachedTokens || undefined,
             },
           }
-          break
+          return
         }
 
-        // ── 失败 / 不完整 ──
+        // ── 失败 ──
         case 'response.failed': {
           const err = event.response?.error
           throw new Error(`OpenAI Responses API failed: ${err?.message ?? 'unknown error'}`)
-        }
-
-        case 'response.incomplete': {
-          yield {
-            type: 'done',
-            stopReason: 'max_tokens',
-            usage: { inputTokens: 0, outputTokens: 0 },
-          }
-          break
         }
 
         // 其他事件 (created, in_progress, content_part, web_search, image_gen 等) — 暂不处理

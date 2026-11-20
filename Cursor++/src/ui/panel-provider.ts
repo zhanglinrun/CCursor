@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
 import { bumpRefreshSignal } from '../server'
-import { getCatalogStatus, refreshCatalog, resolveCatalogModel } from '../server/config/catalogStore'
+import { getCatalogStatus, refreshCatalog, refreshCatalogIfStale, resolveCatalogModel } from '../server/config/catalogStore'
 import { loadProviders, updateProviders } from '../server/config/providersStore'
 import { effectiveProviderType, isProviderType } from '../server/data/defaults'
 import { detectModelProtocol, runModelTest } from '../server/handlers/llm/modelTest'
@@ -117,12 +117,31 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = renderHtml(webviewJs, codiconUri)
 
+    let catalogRefresh: Promise<void> | undefined
+    const refreshStaleCatalog = () => {
+      if (catalogRefresh)
+        return catalogRefresh
+      const pending = refreshCatalogIfStale()
+      void webviewView.webview.postMessage({ type: 'catalogStatus', status: getCatalogStatus() })
+      if (pending) {
+        catalogRefresh = pending.then(async (status) => {
+          await webviewView.webview.postMessage({ type: 'catalogStatus', status })
+        }).finally(() => { catalogRefresh = undefined })
+      }
+      return catalogRefresh
+    }
+    const visibility = webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible)
+        void refreshStaleCatalog()
+    })
+    webviewView.onDidDispose(() => visibility.dispose())
+
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
         case 'ready':
           await refreshState()
           this.postState()
-          this.view?.webview.postMessage({ type: 'catalogStatus', status: getCatalogStatus() })
+          void refreshStaleCatalog()
           break
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
@@ -171,10 +190,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
         case 'resolveCatalogModel': {
           const modelId = typeof msg.modelId === 'string' ? msg.modelId.slice(0, 500) : ''
+          const displayName = typeof msg.displayName === 'string' ? msg.displayName.slice(0, 500) : undefined
+          const ownedBy = typeof msg.ownedBy === 'string' ? msg.ownedBy.slice(0, 500) : undefined
+          const match = resolveCatalogModel(modelId, displayName, ownedBy)
+          if (!match && modelId)
+            await refreshStaleCatalog()
           this.view?.webview.postMessage({
             type: 'catalogModelResolved',
             requestId: msg.requestId,
-            entry: resolveCatalogModel(modelId),
+            entry: match ?? resolveCatalogModel(modelId, displayName, ownedBy),
           })
           break
         }
@@ -192,6 +216,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'No Base URL set yet' })
             break
           }
+          void refreshStaleCatalog()
           // 「列出模型」得挑一种协议去问。中转站下可以混挂多家，这里取第一个
           // 填了 API Model 的模型所生效的协议 —— 它至少对应一个真实存在的模型，
           // 比拿遗留的 provider.type 去猜更靠谱。都没有时回落到 provider.type。
@@ -224,7 +249,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
                   headers[k] = v
               }
             }
-            const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
+            const resp = await fetch(url, { headers, cache: 'no-cache', signal: AbortSignal.timeout(10_000) })
             if (!resp.ok) {
               const body = await resp.text().catch(() => '')
               this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `${resp.status} ${resp.statusText}: ${body.slice(0, 200)}` })

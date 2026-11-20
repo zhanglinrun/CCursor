@@ -127,14 +127,18 @@ export function makeByokConnectError(opts: MakeByokErrorOptions): ConnectError {
  */
 export function makeProviderError(cause: unknown, extra?: Record<string, string>): ConnectError {
   const message = extractErrorMessage(cause)
-  const retryable = inferRetryable(message)
+  const htmlStart = message.search(/<!doctype\s+html\b|<html[\s>]/i)
+  const prefix = htmlStart < 0 ? message : message.slice(0, htmlStart).trim().slice(0, 300)
+  const gatewayChallenge = htmlStart >= 0
+    && /vercel security checkpoint|cf-chl-|challenge-platform/i.test(message.slice(htmlStart))
+  const retryable = gatewayChallenge || inferRetryable(prefix)
   const errorCode = retryable
     ? ErrorDetails_Error.PROVIDER_ERROR
     : ErrorDetails_Error.CUSTOM
   return makeByokConnectError({
     errorCode,
-    title: retryable ? 'LLM provider error' : 'BYOK request rejected',
-    detail: message,
+    title: gatewayChallenge ? 'Upstream gateway security check' : retryable ? 'LLM provider error' : 'BYOK request rejected',
+    detail: htmlStart < 0 ? message : [prefix, 'The upstream gateway returned an HTML page instead of an API response.'].filter(Boolean).join('\n'),
     isRetryable: retryable,
     additionalInfo: {
       errorClass: getErrorClass(cause),

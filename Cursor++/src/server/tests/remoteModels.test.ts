@@ -68,6 +68,16 @@ describe('normalizeRemoteModels — 上游字段归一化', () => {
     expect(result[0]?.id).toBe('gemini-2.5-flash')
   })
 
+  it('keeps positive limits published by OpenAI-compatible endpoints and Gemini', () => {
+    expect(normalizeRemoteModels({ data: [{ id: 'relay', context_length: '32000', max_output_tokens: 2048 }] })[0])
+      .toMatchObject({ contextTokenLimit: 32000, maxOutputTokens: 2048 })
+    expect(normalizeRemoteModels({ models: [{ name: 'models/custom', inputTokenLimit: 65536, outputTokenLimit: 4096 }] })[0])
+      .toMatchObject({ contextTokenLimit: 65536, maxOutputTokens: 4096 })
+    const [invalid] = normalizeRemoteModels([{ id: 'bad', context_length: -1, output_token_limit: 4.5 }])
+    expect(invalid).not.toHaveProperty('contextTokenLimit')
+    expect(invalid).not.toHaveProperty('maxOutputTokens')
+  })
+
   it('响应体直接是数组时也认', () => {
     const result = normalizeRemoteModels([{ id: 'plain' }])
     expect(result.map(m => m.id)).toEqual(['plain'])

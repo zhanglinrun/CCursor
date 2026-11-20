@@ -205,13 +205,10 @@ it('buildMessages produces official-style system and structured user content', (
             rules: [
               {
                 content: 'Always reply in Chinese',
-                // source=2 (CURSOR_RULE_SOURCE_USER) 是真实 payload 里用户规则带的标记。
-                // 不填的话会被归到 always 规则，测不到 <user_rules> 分支。
-                source: 2,
                 type: { global: {} },
               },
               {
-                // 无 source 的 global 规则 = workspace 级别的 always 规则
+                fullPath: '/workspace/app/.cursor/rules/always.md',
                 content: 'Follow the project conventions',
                 type: { global: {} },
               },
@@ -249,9 +246,8 @@ it('buildMessages produces official-style system and structured user content', (
   expect(preambleUserContent).toMatch(/<user_info>/)
   expect(preambleUserContent).toMatch(/<agent_transcripts>/)
   expect(preambleUserContent).toMatch(/<rules>/)
-  expect(preambleUserContent).toMatch(/<user_rules/)
-  expect(preambleUserContent).toMatch(/Always reply in Chinese/)
-  expect(preambleUserContent).toMatch(/<always_applied_workspace_rules/)
+  expect(preambleUserContent).toMatch(/<user_rules[^>]*>\s*<user_rule>Always reply in Chinese<\/user_rule>/)
+  expect(preambleUserContent).toContain('<always_applied_workspace_rule name="/workspace/app/.cursor/rules/always.md">Follow the project conventions')
   // fileGlobbed 正文不预载，读取匹配文件后才通过 related_cursor_rules 注入。
   expect(preambleUserContent).not.toMatch(/Use pnpm/)
   expect(preambleUserContent).toMatch(/<agent_requestable_workspace_rules/)

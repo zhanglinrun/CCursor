@@ -24,6 +24,19 @@ function mapThinkingLevelToGemini(level: NonNullable<LLMStreamRequest['thinkingL
   }
 }
 
+function toGeminiAbortSignal(source: AbortSignal): AbortSignal {
+  source.throwIfAborted()
+  const signal = AbortSignal.any([source])
+  const addEventListener = signal.addEventListener.bind(signal)
+  // GenAI 2.7 registers its listener after async setup and skips the already-aborted check.
+  signal.addEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+    if (type === 'abort')
+      signal.throwIfAborted()
+    addEventListener(type, listener, options)
+  }
+  return signal
+}
+
 export class GeminiProvider implements LLMProvider {
   readonly name = 'gemini'
   private client: GoogleGenAI
@@ -56,6 +69,7 @@ export class GeminiProvider implements LLMProvider {
 
     const genConfig: GenerateContentConfig = {
       maxOutputTokens: request.maxTokens ?? 8192,
+      abortSignal: request.signal && toGeminiAbortSignal(request.signal),
     }
 
     if (encoded.systemInstruction) {

@@ -350,14 +350,14 @@ export function categorizeCursorRules(params: {
     }
     if (rule.kind === 'manuallyAttached')
       continue
-    if (rule.kind === 'global' && !isAutoAttachedRule(rule, workspacePaths)) {
-      alwaysRules.push(rule)
-      continue
-    }
-    // Content-only legacy rules without a path cannot be fetched, so preserve the old eager fallback.
-    if (rule.kind === 'unknown' && !rule.fullPath) {
+    // Cursor Settings can send user rules as pathless global rules without a source.
+    if (!rule.fullPath && (rule.kind === 'global' || rule.kind === 'unknown')) {
       if (rule.content)
         userRules.push(rule.content)
+      continue
+    }
+    if (rule.kind === 'global' && !isAutoAttachedRule(rule, workspacePaths)) {
+      alwaysRules.push(rule)
       continue
     }
     requestableRules.push(rule)

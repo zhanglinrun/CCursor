@@ -12,6 +12,13 @@ export interface LLMMessage {
   toolCallId?: string
   toolName?: string
   isError?: boolean
+  toolResult?: ToolResultMetadata
+}
+
+export interface ToolResultMetadata {
+  raw?: unknown
+  structured?: unknown
+  images?: Array<Extract<LLMContentBlock, { type: 'image' }>>
 }
 
 /** 内容块 (用于 assistant 消息中混合 text + tool_use) */
@@ -20,7 +27,7 @@ export type LLMContentBlock
     | { type: 'image', mimeType: string, data: string }
     | { type: 'thinking', text: string, signature?: string, sourceModel?: string, providerOptions?: Record<string, unknown> }
     | { type: 'tool_use', id: string, name: string, input: Record<string, unknown> }
-    | { type: 'tool_result', toolUseId: string, toolName?: string, content: string, isError?: boolean }
+    | { type: 'tool_result', toolUseId: string, toolName?: string, content: string, isError?: boolean, toolResult?: ToolResultMetadata }
 
 export type LLMToolResultBlock = Extract<LLMContentBlock, { type: 'tool_result' }>
 
@@ -53,6 +60,7 @@ export interface LLMUsage {
 export interface LLMStreamRequest {
   model: string
   messages: LLMMessage[]
+  signal?: AbortSignal
   tools?: LLMTool[]
   /** 仅后台完成通知首轮允许正常 stop 而无回复；本地策略，不发送给模型接口。 */
   allowEmptyCompletion?: boolean

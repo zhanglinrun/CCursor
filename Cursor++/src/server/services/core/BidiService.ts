@@ -4,7 +4,7 @@
  * 1 方法:
  *   - BidiAppend (unary) — 向 bidi 流追加消息
  *     SSE 降级模式下，客户端通过此方法发送 AgentClientMessage，
- *     data 字段包含 base64 编码的序列化 protobuf，requestId 关联到 RunSSE 流。
+ *     requestId 关联到 RunSSE，载荷为 raw data_binary 或旧版 hex data。
  *
  * Transport: backendUrl (api2.cursor.sh)
  */
@@ -17,17 +17,19 @@ export default (router: ConnectRouter) => {
   router.service(BidiService, {
     bidiAppend: async (req) => {
       const requestId = req.requestId?.requestId
-      // 新版客户端（Cursor 3.29+）把消息体放在 bytes 字段 data_binary 里，
-      // 旧版放在 string 字段 data 里（hex 编码的 protobuf）。
-      // 这里统一归一化为 appendMessage 期望的 hex 字符串。
+      const binary = req.dataBinary.length > 0
       const hex = req.data
-        || (req.dataBinary?.length ? Buffer.from(req.dataBinary).toString('hex') : '')
-      if (requestId && hex) {
-        logger.info({ requestId, dataLen: hex.length, seqno: Number(req.appendSeqno), via: req.data ? 'data' : 'dataBinary' }, '[SVC] BidiAppend')
-        appendMessage(requestId, hex)
+      const seqno = Number(req.appendSeqno)
+      if (!requestId || (!binary && !hex)) {
+        logger.warn({ hasRequestId: !!requestId, hasData: !!req.data, dataBinaryLen: req.dataBinary.length, seqno }, '[SVC] BidiAppend missing fields')
+      }
+      else if (!binary && (hex.length % 2 !== 0 || /[^0-9a-f]/i.test(hex))) {
+        logger.warn({ requestId, dataLen: hex.length, seqno }, '[SVC] BidiAppend invalid hex')
       }
       else {
-        logger.warn({ hasRequestId: !!requestId, hasData: !!req.data, dataBinaryLen: req.dataBinary?.length ?? 0, seqno: Number(req.appendSeqno) }, '[SVC] BidiAppend missing fields')
+        const bytes = binary ? req.dataBinary : Buffer.from(hex, 'hex')
+        logger.info({ requestId, seqno, via: binary ? 'dataBinary' : 'data', bytes: bytes.length }, '[SVC] BidiAppend')
+        appendMessage(requestId, bytes)
       }
       return {}
     },

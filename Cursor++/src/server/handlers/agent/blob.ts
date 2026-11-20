@@ -5,10 +5,7 @@
  *   - Server → Client: kvServerMessage.setBlobArgs { blobId, blobData }
  *   - Client → Server: kvClientMessage.setBlobResult { id? }
  *
- * blobData 是 base64 编码的 JSON，解码后为标准 LLM 消息格式:
- *   { "role": "system", "content": "..." }
- *   { "role": "user", "content": "..." }
- *   { "role": "assistant", "content": [...] }
+ * 缓存保存 payload 的 base64；KV 帧发送原始 UTF-8 JSON 或 protobuf bytes。
  */
 import { createHash } from 'node:crypto'
 
@@ -17,10 +14,13 @@ function finalizeBlobData(blobData: string): { blobId: string, blobData: string 
   return { blobId, blobData }
 }
 
-/** 将 JSON 对象编码为 blob (base64) 并计算 blobId (sha256) */
+/** JSON IDs hash the wire bytes so a new write cannot alias a legacy Base64-text write. */
 export function encodeBlob(data: unknown): { blobId: string, blobData: string } {
-  const json = JSON.stringify(data)
-  return finalizeBlobData(Buffer.from(json).toString('base64'))
+  const bytes = Buffer.from(JSON.stringify(data), 'utf8')
+  return {
+    blobId: createHash('sha256').update(bytes).digest('base64'),
+    blobData: bytes.toString('base64'),
+  }
 }
 
 /**
@@ -32,10 +32,39 @@ export function encodeBinaryBlob(bytes: Uint8Array): { blobId: string, blobData:
   return { blobId, blobData, blobDataRaw: bytes }
 }
 
-/** 解码 blob base64 → JSON */
+/** Convert a Base64 cache value to the exact payload stored by the client. */
+export function cachedBlobPayloadBytes(blobData: string): Buffer {
+  return Buffer.from(blobData, 'base64')
+}
+
+function parseCachedJson(blobData: string): { json: string, value: unknown, legacyWire?: boolean } {
+  const direct = blobData.trimStart()
+  if (direct.startsWith('{') || direct.startsWith('['))
+    return { json: blobData, value: JSON.parse(blobData) }
+
+  const json = cachedBlobPayloadBytes(blobData).toString('utf8')
+  try {
+    return { json, value: JSON.parse(json) }
+  }
+  catch (error) {
+    // Legacy uploads encode the client's Base64-text wire payload a second time.
+    const unwrapped = cachedBlobPayloadBytes(json).toString('utf8')
+    if (Buffer.from(unwrapped).toString('base64') !== json)
+      throw error
+    return { json: unwrapped, value: JSON.parse(unwrapped), legacyWire: true }
+  }
+}
+
 export function decodeBlob(blobData: string): unknown {
-  const json = Buffer.from(blobData, 'base64').toString('utf-8')
-  return JSON.parse(json)
+  return parseCachedJson(blobData).value
+}
+
+/** Identify JSON addressed by the old server, regardless of how it entered this cache. */
+export function decodeLegacyHistoryBlob(blobId: string, blobData: string): unknown {
+  const { json, value, legacyWire } = parseCachedJson(blobData)
+  const legacyCacheValue = Buffer.from(json, 'utf8').toString('base64')
+  if (legacyWire || finalizeBlobData(legacyCacheValue).blobId === blobId)
+    return value
 }
 
 /** 构造 system prompt blob */
@@ -66,5 +95,5 @@ export function buildUserMessageBlob(
 
   content += `<user_query>\n${text}\n</user_query>`
 
-  return encodeBlob({ role: 'user', content })
+  return encodeBlob({ role: 'user', content: [{ type: 'text', text: content }] })
 }

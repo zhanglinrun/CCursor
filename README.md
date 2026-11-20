@@ -68,7 +68,7 @@ node installer/dist/cli.cjs check
 ## 压缩与模型目录细节
 
 - 压缩在每次模型请求前检查——新消息、工具结果和 schema 都算。软阈值摘要失败会保留原历史，低于硬上限仍可继续；超长摘要输入按预算分块，空白/截断的摘要不提交，也不会用截取文本冒充摘要。
-- 模型目录按需从 `https://models.dev/api.json` 刷新，失败时保留旧快照。API Model 保留端点原名，Fast 默认关闭。构建前可用 `node installer/scripts/update-models-catalog.mjs` 更新内置快照，不会修改用户配置。
+- 打开面板或获取可用模型时，目录超过一小时会从 `models.dev` 后台刷新。也可点击「更新目录」，失败时保留上次成功的快照。「获取模型」直接查询供应商，能选到目录尚未收录的模型，并使用供应商返回的有效上限。API Model 保留端点原名，已保存的配置由用户编辑后保存。构建前可用 `node installer/scripts/update-models-catalog.mjs` 更新内置快照。
 
 ## 远程工作区：需要自行验证的内容
 

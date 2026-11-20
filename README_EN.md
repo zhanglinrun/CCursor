@@ -68,7 +68,7 @@ Tests run against synthetic homes under `Temp/tests`, never your real BYOK confi
 ## Context compaction and model catalog in detail
 
 - Compaction checks before every model request — new prompts, tool results and schemas included. A failed soft-trigger summary keeps the history intact and the session may continue below the hard limit. Oversized summary input is summarized in bounded chunks; empty/truncated summaries are never committed, and a local text excerpt is never passed off as a summary.
-- The catalog refreshes from `https://models.dev/api.json` on demand; failures keep the previous snapshot. The wire model id stays unchanged and Fast stays off unless you enable it. Refresh the bundled snapshot with `node installer/scripts/update-models-catalog.mjs` before rebuilding — this never touches user configuration.
+- Opening the panel or fetching available models refreshes a catalog more than an hour old in the background. Manual refresh stays available, and failures keep the last successful snapshot. **Fetch** lists the provider's current models and can fill in token limits reported by the provider before the catalog includes them. The wire model ID is preserved. Refresh the bundled snapshot with `node installer/scripts/update-models-catalog.mjs` before rebuilding.
 
 ## Remote workspaces: what to verify
 

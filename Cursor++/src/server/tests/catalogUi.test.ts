@@ -76,6 +76,14 @@ it('resolves missing metadata in the host and protects edits made during the res
   expect(postMessage.mock.calls.some(([msg]) => msg.type === 'searchCatalog')).toBe(false)
 })
 
+it('imports a new relay model with its endpoint limits before the catalog knows it', () => {
+  store.applyRemoteModel('provider', { id: 'private-model', displayName: 'Private', contextTokenLimit: 32000, maxOutputTokens: 2048 })
+  const requestId = postMessage.mock.calls.find(([msg]) => msg.type === 'resolveCatalogModel')![0].requestId
+  receive({ data: { type: 'catalogModelResolved', requestId } })
+  expect(model()).toMatchObject({ apiModel: 'private-model', displayName: 'Private', contextTokenLimit: 32000, maxOutputTokens: 2048 })
+  expect(store.state.providers[0].models).toEqual([])
+})
+
 it('ignores stale results after changing or deleting the selected model', () => {
   store.applyRemoteModel('provider', { id: 'gpt-6.1-sol', displayName: '' })
   const requestId = postMessage.mock.calls.find(([msg]) => msg.type === 'resolveCatalogModel')![0].requestId

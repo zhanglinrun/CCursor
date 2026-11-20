@@ -97,7 +97,7 @@ function normalizeToolMessage(message: StoredMessage): Extract<SemanticTurn, { k
     results: blocks.map(block => ({
       callId: block.toolCallId,
       toolName: block.toolName,
-      content: block.result,
+      content: typeof block.result === 'string' ? block.result : JSON.stringify(block.result) ?? '',
       isError: !!block.isError,
       ...(block.structured !== undefined ? { structured: block.structured } : {}),
     })),

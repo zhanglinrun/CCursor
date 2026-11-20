@@ -12,6 +12,8 @@ import { getModelsCatalogFilePath } from './paths'
 export const CATALOG_URL = 'https://models.dev/api.json'
 export const CATALOG_TIMEOUT_MS = 10_000
 export const CATALOG_MAX_BYTES = 16 * 1024 * 1024
+const CATALOG_MAX_AGE_MS = 60 * 60_000
+const CATALOG_RETRY_DELAY_MS = 5 * 60_000
 
 export type { CatalogEntry } from '../../shared/catalogModelDefaults'
 
@@ -124,6 +126,7 @@ export class CatalogStore {
   private fuse = buildFuse([])
   private loaded = false
   private refreshing?: Promise<CatalogStatus>
+  private lastAttemptAt?: number
   private status: Omit<CatalogStatus, 'refreshing'> = {
     source: 'empty',
     url: CATALOG_URL,
@@ -210,6 +213,7 @@ export class CatalogStore {
     const request = async () => {
       const response = await (this.options.fetchImpl ?? fetch)(CATALOG_URL, {
         headers: { Accept: 'application/json' },
+        cache: 'no-cache',
         signal: controller.signal,
         redirect: 'error',
         credentials: 'omit',
@@ -269,10 +273,24 @@ export class CatalogStore {
     }
   }
 
+  refreshIfStale(): Promise<CatalogStatus> | undefined {
+    this.load()
+    if (this.refreshing)
+      return this.refreshing
+    const now = (this.options.now?.() ?? new Date()).getTime()
+    const updatedAt = Date.parse(this.status.updatedAt ?? '')
+    if (now - updatedAt < CATALOG_MAX_AGE_MS
+      || (this.lastAttemptAt !== undefined && now - this.lastAttemptAt < CATALOG_RETRY_DELAY_MS)) {
+      return
+    }
+    return this.refresh()
+  }
+
   refresh(): Promise<CatalogStatus> {
     this.load()
     if (this.refreshing)
       return this.refreshing
+    this.lastAttemptAt = (this.options.now?.() ?? new Date()).getTime()
     this.refreshing = (async () => {
       try {
         const raw: unknown = JSON.parse(await this.download())
@@ -318,6 +336,10 @@ export function getCatalogStatus(): CatalogStatus {
 
 export function refreshCatalog(): Promise<CatalogStatus> {
   return getStore().refresh()
+}
+
+export function refreshCatalogIfStale(): Promise<CatalogStatus> | undefined {
+  return getStore().refreshIfStale()
 }
 
 export function resetCatalogCacheForTests(): void {

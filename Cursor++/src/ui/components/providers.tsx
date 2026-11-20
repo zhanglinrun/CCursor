@@ -30,7 +30,7 @@ export function Providers() {
           <span>上次更新</span>
           <span x-text="$store.app.catalogUpdatedAt"></span>
         </div>
-        <p class="catalog-note">选择可用模型后自动填参，保存后生效；更新目录不会覆盖已有配置。</p>
+        <p class="catalog-note">打开面板会自动检查过期目录。用「获取模型」查看供应商当前提供的模型。</p>
         <div class="catalog-error" role="alert" x-show="$store.app.catalogStatus?.lastError" x-cloak>
           <strong x-text="$store.app.catalogStatus?.source === 'empty' ? '模型目录暂不可用，请尝试更新。' : '目录更新失败，已保留原有数据。'"></strong>
           <span x-text="$store.app.catalogStatus?.lastError"></span>

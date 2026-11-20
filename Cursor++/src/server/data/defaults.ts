@@ -69,7 +69,6 @@ export const BYOK_REDIRECT: readonly string[] = [
   'aiserver.v1.DashboardService/GetTeams',
   'aiserver.v1.DashboardService/GetUserPrivacyMode',
   'aiserver.v1.DashboardService/GetUsageLimitStatusAndActiveGrants',
-  'aiserver.v1.DashboardService/GetEffectiveUserPlugins',
   'aiserver.v1.DashboardService/IsOnNewPricing',
   'aiserver.v1.DashboardService/GetManagedSkills',
   'aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam',

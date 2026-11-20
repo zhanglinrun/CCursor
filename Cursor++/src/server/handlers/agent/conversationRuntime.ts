@@ -14,6 +14,7 @@ import { logger } from '../../logger'
 import { recordUsage } from '../../stats/usageStore'
 import { makeByokConnectError, makeProviderError, makeToolError } from '../errors'
 import { resolveProviderRuntime } from '../llm'
+import { openProviderStream } from '../llm/providerStream'
 import { createRepairDiagnostics, hasRepairMutations, repairConversationHistory } from '../llm/transformMessages'
 import { decodeBlob } from './blob'
 import { cacheBlob, getCachedBlob } from './blobStore'
@@ -23,9 +24,8 @@ import { buildContextBreakdown } from './contextBreakdown'
 import { contextualizeDynamicMetaTools, partitionCursorBuiltinTools, shouldEnableBuiltinDynamicProfile } from './dynamicTools'
 import { editNewlineStats, editToolTargetStats } from './editStreamDiagnostics'
 import { EditDeltaExtractor, normalizeDetectedEditPath } from './editStreamExtractor'
-import { flushMessageBlobs, hydrateHistoryEntries, isSummaryBlobMessage, materializeHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
+import { flushMessageBlobs, hydrateHistoryEntries, isSummaryBlobMessage, materializeHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob, writeCompactionBlobs } from './historyManager'
 import { buildMessages, workspaceUris } from './protocol'
-import { isSessionCancelled } from './session'
 import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { contextualizeSubagentTools } from './subagentCatalog'
 import { generateModelSummary } from './summaryRequest'
@@ -221,12 +221,9 @@ export async function* performInlineAutoSummarize(params: {
     knownBlobIds: allBlobIds,
   })
 
-  let summaryBlobCounter = 0
-  for (const historyBlob of artifacts.historyBlobs)
-    yield kvMessage(++summaryBlobCounter, historyBlob.blobId, historyBlob.blobData)
-  yield kvMessage(++summaryBlobCounter, artifacts.summaryBlobId, artifacts.summaryBlobData)
-  for (const archiveBlob of artifacts.archiveBlobs) {
-    yield kvMessage(++summaryBlobCounter, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
+  if (!(yield* writeCompactionBlobs(artifacts, params.session ?? null))) {
+    yield summaryCompleted('Cursor did not confirm the compacted history. Original history preserved.')
+    return null
   }
 
   const previousRequestEstimate = estimateRequestTokens(params.messages)
@@ -321,6 +318,8 @@ export async function* handleConversationRun(
   parsed: ParsedRunRequest,
   session: AgentSession | null,
 ): AsyncIterable<AgentServerMessage> {
+  if (session)
+    throwIfSessionCancelled(session)
   const route = resolveProviderRuntime(parsed.modelId)
   const requestedContextTokenLimit = parsed.contextTokenLimit
   if (parsed.contextTokenLimit === undefined) {
@@ -606,7 +605,7 @@ export async function* handleConversationRun(
   for (let round = 0; ; round++) {
     // 轮次边界的中断检查 —— 上一轮工具刚跑完时客户端可能已经中断,
     // 此处拦下可避免白发一次 LLM 请求
-    if (session && isSessionCancelled(session)) {
+    if (session?.abortController.signal.aborted) {
       logger.info({
         conversationId: parsed.conversationId,
         round,
@@ -668,6 +667,7 @@ export async function* handleConversationRun(
     const roundAssistantBlocks: LLMContentBlock[] = []
     let currentThinking = ''
     let currentText = ''
+    let llmStream: ReturnType<typeof openProviderStream> | undefined
 
     try {
       // dynamic namespace 模式 (Cursor 3.15.6): MCP 工具**不进** LLM 可见工具表,
@@ -719,9 +719,9 @@ export async function* handleConversationRun(
         llmVisibleMcpToolsCount: llmVisibleMcpTools.length,
       }, '[AGENT] prepared provider conversation')
 
-      const llmStream = route.provider.stream(preparedRequest.request)
+      llmStream = openProviderStream(route.provider, preparedRequest.request, session?.abortController.signal)
 
-      const translatedFrames = translateStream(llmStream, String(++stepCounter), (event) => {
+      const translatedFrames = translateStream(llmStream.events, String(++stepCounter), (event) => {
         switch (event.type) {
           case 'thinking_delta':
             currentThinking += event.text
@@ -852,6 +852,14 @@ export async function* handleConversationRun(
               currentThinking,
               currentText,
             }))
+            if (event.stopReason === 'max_tokens' || event.stopReason === 'content_filter') {
+              // A truncated or filtered response can contain completed tool items. Keep only its visible reply.
+              pendingToolCalls.length = 0
+              for (let i = roundAssistantBlocks.length - 1; i >= 0; i--) {
+                if (roundAssistantBlocks[i].type === 'tool_use')
+                  roundAssistantBlocks.splice(i, 1)
+              }
+            }
             Object.assign(usageTotals, addUsage(usageTotals, event.usage))
             usedTokensEstimate = Math.max(usedTokensEstimate, estimateContextTokens({ inputTokens: normalizeUsage(route.providerType, event.usage).promptTokens, outputTokens: event.usage.outputTokens }))
             requestTokenRatio = Math.max(1, normalizeUsage(route.providerType, event.usage).promptTokens / Math.max(1, localRequestTokens))
@@ -875,20 +883,19 @@ export async function* handleConversationRun(
       })
 
       for await (const frame of translatedFrames) {
-        // LLM 流是一轮里最长的一段停留,中断多半落在这里。逐帧检查把中断
-        // 粒度收敛到单个事件 (thinking_delta 级,毫秒量级)。抛出后由下方
-        // catch 的 isAgentRunAbortedError 分支干净收尾,半截的
-        // roundAssistantBlocks 一并丢弃,不污染历史。
+        // A cancel can arrive while a translated frame is waiting to be sent.
         if (session)
           throwIfSessionCancelled(session)
         yield frame
       }
+      if (session)
+        throwIfSessionCancelled(session)
     }
     catch (e) {
       // 客户端主动中断不是错误 —— 必须先于 makeProviderError 拦下,
       // 否则会被包成 ErrorDetails,在客户端渲染出一条 retry banner:
       // 用户只是发了新消息抢占当前生成,却看到"上一条失败了"。
-      if (isAgentRunAbortedError(e)) {
+      if (session?.abortController.signal.aborted || isAgentRunAbortedError(e)) {
         logger.info({
           conversationId: parsed.conversationId,
           round,
@@ -912,6 +919,14 @@ export async function* handleConversationRun(
         modelId: parsed.modelId,
         round: String(round),
       })
+    }
+    finally {
+      llmStream?.close()
+      for (const callId of inflightToolCalls.keys()) {
+        editExtractors.delete(callId)
+        editPathSent.delete(callId)
+        editStreamDiagnostics.delete(callId)
+      }
     }
 
     if (pendingToolCalls.length === 0) {

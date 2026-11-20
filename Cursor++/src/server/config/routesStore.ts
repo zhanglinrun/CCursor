@@ -39,7 +39,7 @@ function withFallback(loaded: Partial<RoutesConfig> | null): RoutesConfig {
       port: loaded.collector?.port ?? fallback.collector.port,
     },
     redirect: Array.isArray(loaded.redirect) && loaded.redirect.length > 0
-      ? loaded.redirect.slice()
+      ? loaded.redirect.filter(route => route !== 'aiserver.v1.DashboardService/GetEffectiveUserPlugins')
       : buildRedirectForMode(byokMode),
   }
 }
@@ -51,7 +51,7 @@ export function loadRoutes(): RoutesConfig {
 
 /**
  * 首次启动 / 缺字段时把内置默认值补齐写回。
- * 已有字段一律保留, 不覆盖用户值。
+ * 保留用户配置，并移除旧版本误拦截的官方用户插件查询。
  */
 export async function ensureRoutesFile(): Promise<RoutesConfig> {
   const path = getRoutesFilePath()

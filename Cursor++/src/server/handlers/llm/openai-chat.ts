@@ -62,7 +62,7 @@ export class OpenAIChatProvider implements LLMProvider {
       params.reasoning_effort = request.thinkingLevel
     }
 
-    const stream = await this.client.chat.completions.create(params)
+    const stream = await this.client.chat.completions.create(params, { signal: request.signal })
 
     const toolCalls = new Map<number, { id: string, name: string, args: string }>()
     let usage: { inputTokens: number, outputTokens: number, cacheReadTokens?: number } | null = null

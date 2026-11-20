@@ -7,10 +7,10 @@ import { logger } from '../../logger'
 import { makeProviderError } from '../errors'
 import { resolveProviderRuntime } from '../llm'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCheckpointCompaction } from './compactionStrategy'
-import { hydrateHistoryEntries, repairHistoryEntries } from './historyManager'
+import { hydrateHistoryEntries, isSummaryBlobMessage, repairHistoryEntries, writeCompactionBlobs } from './historyManager'
 import { executePreCompactHook } from './hookRuntime'
 import { workspaceUris } from './protocol'
-import { checkpoint, heartbeat, kvMessage, summaryCompleted, summaryStarted } from './stream'
+import { checkpoint, heartbeat, summaryCompleted, summaryStarted } from './stream'
 import { generateModelSummary } from './summaryRequest'
 import { clampTokenDetails, computeContextUsagePercent } from './usage'
 import { isAgentRunAbortedError, throwIfSessionCancelled } from './wait'
@@ -19,6 +19,8 @@ export async function* handleSummarizeAction(
   parsed: ParsedRunRequest,
   session: AgentSession | null,
 ): AsyncIterable<AgentServerMessage> {
+  if (session)
+    throwIfSessionCancelled(session)
   const route = resolveProviderRuntime(parsed.modelId)
   const hydratedHistoryEntries = hydrateHistoryEntries(parsed.historyBlobIds)
   const missingHistoryBlobs = Math.max(0, parsed.historyBlobIds.length - hydratedHistoryEntries.length)
@@ -61,6 +63,8 @@ export async function* handleSummarizeAction(
   })
 
   yield summaryStarted()
+  if (session)
+    throwIfSessionCancelled(session)
 
   if (missingHistoryBlobs > 0) {
     logger.warn({
@@ -100,7 +104,7 @@ export async function* handleSummarizeAction(
     return
   }
 
-  if (compactionPlan.summarizeEntries.length === 0) {
+  if (compactionPlan.summarizeEntries.every(entry => isSummaryBlobMessage(entry.raw))) {
     persistConversationCheckpoint({
       kind: 'committed',
       conversationId: parsed.conversationId,
@@ -172,12 +176,9 @@ export async function* handleSummarizeAction(
     knownBlobIds: parsed.historyBlobIds,
   })
 
-  let summaryBlobCounter = 0
-  for (const historyBlob of artifacts.historyBlobs)
-    yield kvMessage(++summaryBlobCounter, historyBlob.blobId, historyBlob.blobData)
-  yield kvMessage(++summaryBlobCounter, artifacts.summaryBlobId, artifacts.summaryBlobData)
-  for (const archiveBlob of artifacts.archiveBlobs) {
-    yield kvMessage(++summaryBlobCounter, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
+  if (!(yield* writeCompactionBlobs(artifacts, session))) {
+    yield summaryCompleted('Cursor did not confirm the compacted history. Original history preserved.')
+    return
   }
 
   const compactedUsedTokens = clampTokenDetails(

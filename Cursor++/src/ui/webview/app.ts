@@ -1539,7 +1539,7 @@ export function initApp(Alpine: AlpineType) {
       }
       const requestId = uid('defaults')
       this.modelDefaultsPending[requestId] = { pid, mid, apiModel: model.apiModel, before: clone(model) }
-      this.post('resolveCatalogModel', { modelId: model.apiModel, requestId })
+      this.post('resolveCatalogModel', { modelId: model.apiModel, requestId, displayName: remote?.displayName, ownedBy: remote?.ownedBy })
     },
 
     applyCatalogEntry(pid: string, mid: string, entry: any, before?: Record<string, any>) {
@@ -1592,10 +1592,16 @@ export function initApp(Alpine: AlpineType) {
         return
       model.apiModel = rm.id
       model.displayName = rm.displayName || rm.id
-      if (rm.catalog)
+      if (rm.catalog) {
         this.applyCatalogEntry(pid, model.id, rm.catalog)
-      else
+      }
+      else {
+        if (rm.contextTokenLimit !== undefined)
+          model.contextTokenLimit = rm.contextTokenLimit
+        if (rm.maxOutputTokens !== undefined)
+          model.maxOutputTokens = rm.maxOutputTokens
         this.resolveModelDefaults(pid, model.id)
+      }
     },
 
     /**
@@ -1727,8 +1733,8 @@ export function initApp(Alpine: AlpineType) {
         return
       if (msg.entry)
         s.applyCatalogEntry(pending.pid, pending.mid, msg.entry, pending.before)
-      else
-        s.toast('No reliable catalog match. Enter this model’s limits manually; its endpoint ID was kept.', 'warn')
+      else if (!model.contextTokenLimit)
+        s.toast('目录暂无此模型的参数，请填写供应商标注的上下文上限。', 'warn')
     }
     else if (msg?.type === 'searchTestResult') {
       s.searchTesting = false
