@@ -144,31 +144,78 @@ export const styles = /* css */ `
   h3 .h3-actions { display: flex; gap: 4px; align-items: center; }
 
   /* ── 配置页：目录摘要、服务商与低频操作分层 ──────────────── */
-  .config-page { max-width: 960px; margin: 0 auto; }
-  .config-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px 0 14px; }
-  .config-header h2 { margin: 0; color: var(--cpp-text); font-size: 16px; font-weight: 650; line-height: 1.4; letter-spacing: 0; }
-  .config-header p { margin: 4px 0 0; color: var(--cpp-text-dim); font-size: 11px; }
-  .config-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-  .catalog-card { padding: 14px; margin-bottom: 16px; border: 1px solid var(--cpp-border); border-radius: 10px; background: var(--cpp-surface); }
-  .catalog-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
-  .catalog-info { flex: 1 1 180px; min-width: 0; }
-  .catalog-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
-  .catalog-title { font-weight: 650; color: var(--cpp-text); font-size: 12px; }
-  .catalog-source { color: var(--cpp-text-dim); font-size: 11px; }
-  .catalog-badge { padding: 2px 6px; border: 1px solid var(--cpp-border); border-radius: var(--cpp-radius-pill); color: var(--cpp-text-dim); font-size: 10px; line-height: 1.3; }
-  .catalog-counts { margin-top: 6px; font-size: 12px; color: var(--cpp-text); line-height: 1.5; }
+  .config-page {
+    --settings-canvas: var(--vscode-sideBar-background, var(--cpp-editor-widget-bg));
+    --settings-tray: color-mix(in srgb, var(--cpp-ink) 6%, var(--settings-canvas));
+    --settings-row: color-mix(in srgb, var(--vscode-editor-background, var(--settings-canvas)) 65%, var(--settings-canvas));
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+  .config-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 16px 0 10px; }
+  .config-header h2, .provider-edit-toolbar h2 { margin: 0; color: var(--cpp-text); font-size: 15px; font-weight: 650; line-height: 1.4; letter-spacing: 0; }
+  .config-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+  .config-actions > button { min-height: 28px; }
+  button.settings-primary { color: var(--settings-canvas); background: var(--cpp-text); padding-inline: 12px; white-space: nowrap; }
+  button.settings-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--cpp-text) 83%, var(--settings-canvas)); }
+  .catalog-status { padding: 13px 8px 4px; color: var(--cpp-text-dim); font-size: 11px; }
+  .catalog-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+  .catalog-info { flex: 1 1 175px; min-width: 0; }
+  .catalog-badge, .service-count { padding: 2px 6px; border-radius: var(--cpp-radius-pill); background: var(--cpp-surface-2); color: var(--cpp-text-dim); font-size: 10px; line-height: 1.3; }
+  .service-count { margin-inline-start: 5px; font-variant-numeric: tabular-nums; }
+  .service-list { border-top: 1px solid var(--cpp-border); }
+  .service-row { display: flex; align-items: center; gap: 9px; padding: 0 10px 0 0; min-height: 58px; border-bottom: 1px solid var(--cpp-border); }
+  .service-row:hover, .service-row:focus-within { background: var(--cpp-surface); }
+  button.service-open { display: flex; align-items: center; text-align: left; gap: 10px; flex: 1; min-width: 0; min-height: 56px; padding: 8px; color: var(--cpp-text); }
+  button.service-open:hover:not(:disabled) { background: transparent; }
+  .service-icon { display: grid; place-items: center; flex: 0 0 29px; height: 29px; background: var(--cpp-surface-2); border-radius: var(--cpp-radius-sm); color: var(--cpp-text-dim); font-size: 12px; font-weight: 650; }
+  .service-identity { display: grid; gap: 3px; min-width: 0; }
+  .service-name { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .service-name strong, .service-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .service-name strong { font-size: 12px; font-weight: 650; }
+  .service-name .catalog-badge { flex: none; }
+  .service-meta { color: var(--cpp-text-dim); font-size: 11px; }
+  .service-disabled .service-open { color: var(--cpp-text-dim); }
+  .service-disabled .service-icon { background: var(--cpp-surface); }
+  button.service-switch { position: relative; flex: 0 0 35px; min-width: 0; min-height: 0; height: 20px; padding: 0; border: 0; border-radius: var(--cpp-radius-pill); background: var(--cpp-off-track); }
+  button.service-switch:hover:not(:disabled) { background: var(--cpp-border-strong); }
+  button.service-switch[aria-checked='true'] { background: var(--cpp-on-track); }
+  button.service-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--cpp-knob); box-shadow: 0 1px 2px #0003; }
+  button.service-switch[aria-checked='true']::after { left: 17px; }
+  .provider-editor { margin-top: 12px; background: var(--settings-canvas); border: 1px solid var(--cpp-border); border-radius: 10px; }
+  .provider-edit-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: var(--settings-canvas); border-bottom: 1px solid var(--cpp-border); border-radius: 9px 9px 0 0; }
+  .provider-edit-toolbar button[aria-expanded='true'] { background: var(--cpp-surface-2); color: var(--cpp-text); }
+  .provider-editor-body { padding: 12px; }
+  .provider-editor > .actions-bar { margin: 0; padding: 6px 12px; }
+  .connection-title { margin: 0 0 8px; color: var(--cpp-text); font-size: 12px; font-weight: 650; }
+  .provider-advanced, .model-item { scroll-margin-block-start: 82px; }
+  .models-section { display: grid; gap: 10px; margin-top: 12px; }
+  .model-pane { display: flex; flex-direction: column; min-width: 0; gap: 6px; padding: 8px; background: var(--settings-tray); border-radius: 8px; }
+  .model-pane .models-header { min-height: 26px; margin: 0; }
+  .model-pane .remote-models-panel { margin: 0; }
+  .model-search { position: relative; }
+  .model-search::before { content: ''; position: absolute; left: 9px; top: 9px; width: 7px; height: 7px; border: 1px solid var(--cpp-text-faint); border-radius: 50%; pointer-events: none; }
+  .model-search::after { content: ''; position: absolute; left: 16px; top: 17px; width: 4px; height: 1px; background: var(--cpp-text-faint); rotate: 45deg; pointer-events: none; }
+  .model-search input { min-height: 29px; padding-left: 25px; }
+  .custom-model-entry { display: grid; gap: 4px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--cpp-border); }
+  .custom-model-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .custom-model-form button { white-space: nowrap; }
+  .remote-model-count { font-size: 10px; color: var(--cpp-text-dim); white-space: nowrap; }
+  @media (min-width: 740px) {
+    .models-section { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .model-pane { min-height: 280px; }
+    .configured-models-list { max-height: clamp(210px, 50vh, 460px); overflow: auto; scrollbar-width: thin; }
+  }
   button.catalog-refresh { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 30px; flex: 0 0 auto; }
+  .custom-protocol-fields { display: grid; gap: 4px; padding: 8px; margin-top: 6px; background: var(--cpp-surface); border-radius: var(--cpp-radius-sm); }
+  .custom-protocol-fields > label { margin-top: 3px; }
   .catalog-refresh-icon { display: inline-block; font-size: 16px; line-height: 1; }
   .catalog-refresh-icon.is-spinning { animation: catalog-spin 1s linear infinite; }
   @keyframes catalog-spin { to { transform: rotate(360deg); } }
-  .catalog-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 10px; color: var(--cpp-text-dim); font-size: 11px; }
-  .catalog-note { border-top: 1px solid var(--cpp-border); padding-top: 9px; margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--cpp-text-dim); }
   .catalog-error { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 9px; background: var(--cpp-danger-soft); border-radius: var(--cpp-radius-sm); color: var(--cpp-danger); overflow-wrap: anywhere; font-size: 11px; }
   @media (max-width: 420px) {
     .config-header { align-items: flex-start; }
     .config-actions { width: 100%; }
     .config-actions > button { flex: 1; }
-    .catalog-card { padding: 12px; }
     .catalog-info { flex-basis: 150px; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -296,45 +343,6 @@ export const styles = /* css */ `
     align-items: start;
   }
   .field-row > * { min-width: 0; }
-
-  /* ── 分段控件（协议两级选择） ─────────────────────────── */
-  .seg {
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--cpp-surface-2);
-    border: 1px solid var(--cpp-border);
-    border-radius: var(--cpp-radius-sm);
-  }
-  .seg-btn {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    color: var(--cpp-text-dim);
-    border: none;
-    border-radius: 5px;
-    padding: 5px 6px;
-    font-size: 10px;
-    font-weight: 600;
-    /* 一行居中，不折行。
-       侧边栏很窄，三档并排时每档只有 ~60px；"Anthropic Messages" 这类长标签会被
-       折成两行，三个按钮高度就此不齐。所以标签本身已改成短名（见
-       PROTOCOL_FAMILY_OPTIONS），这里再用 nowrap 兜一层：宁可挤一点也不折行。 */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .seg-btn:hover:not(:disabled) { background: var(--cpp-surface-3); color: var(--cpp-text); }
-  .seg-btn.active {
-    background: var(--cpp-surface);
-    color: var(--cpp-accent);
-    box-shadow: var(--cpp-shadow);
-  }
-  .seg-path { font-family: var(--cpp-mono); font-size: 9px; font-weight: 400; color: inherit; opacity: 0.75; }
 
   /* ── 最终请求地址预览 ─────────────────────────────────── */
   .endpoint {
@@ -503,27 +511,39 @@ export const styles = /* css */ `
     gap: 10px;
     padding: 12px 12px 12px 14px;
     margin: 0 -12px 4px;
-    background: linear-gradient(180deg, var(--cpp-surface), var(--cpp-surface-2));
+    background: color-mix(in srgb, var(--cpp-accent) 6%, var(--cpp-bg));
     border-bottom: 1px solid var(--cpp-border);
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 20;
   }
-  .byok-banner .byok-label { display: flex; flex-direction: column; min-width: 0; }
-  .byok-banner .byok-title { font-weight: 700; font-size: 12px; letter-spacing: -0.01em; }
-  .byok-banner .byok-hint { font-size: 10px; color: var(--cpp-text-faint); margin-top: 2px; }
-  .byok-banner .banner-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-  .byok-banner button.on { background: var(--cpp-ok); color: #fff; }
-  .byok-banner button.on:hover:not(:disabled) { background: var(--cpp-ok); opacity: 0.9; }
-  .byok-banner button.off { background: var(--cpp-warn); color: #fff; }
-  /* 主题不再提供手动切换 —— 面板跟随编辑器配色，少一个与用户目标无关的开关 */
-  .byok-banner button.off:hover:not(:disabled) { background: var(--cpp-warn); opacity: 0.9; }
+  .byok-banner .byok-label { display: flex; flex: 1 1 140px; flex-direction: column; min-width: 0; }
+  .byok-banner .byok-title { font-weight: 700; font-size: 13px; }
+  .byok-banner .byok-hint { font-size: 11px; color: var(--cpp-text-dim); margin-top: 2px; }
+  .byok-banner .banner-actions { display: flex; flex: 0 0 auto; }
+
+  /* 补丁缺失＝功能不可用，横幅按告警条呈现，并给出唯一该点的按钮 */
+  .byok-banner.blocked {
+    background: var(--cpp-warn-soft);
+    border-bottom-color: var(--cpp-warn-border);
+    box-shadow: inset 3px 0 0 var(--cpp-warn);
+  }
+  .byok-banner.blocked .byok-title { color: var(--cpp-warn); }
+  .byok-banner.blocked .byok-title::before { content: '⚠ '; }
+  .byok-banner.blocked .byok-hint { color: var(--cpp-text); }
+  button.banner-primary {
+    min-height: 30px;
+    padding-inline: 14px;
+    font-weight: 700;
+    box-shadow: 0 1px 6px var(--cpp-warn-border);
+  }
 
   /* ── 状态点 ───────────────────────────────────────────── */
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: 0 0 auto; background: var(--cpp-text-faint); }
   .dot-ok { background: var(--cpp-ok); }
   .dot-warn { background: var(--cpp-warn); }
   .dot-bad { background: var(--cpp-danger); }
-  .server-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 11px; color: var(--cpp-text-dim); }
-  .server-row .server-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .server-actions { display: flex; gap: 4px; }
 
   .row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 12px; gap: 8px; }
 
@@ -542,35 +562,8 @@ export const styles = /* css */ `
 
   .empty { font-size: 11px; color: var(--cpp-text-faint); padding: 14px 0; text-align: center; }
 
-  /* ── Provider 折叠面板 ───────────────────────────────── */
-  .acc {
-    border: 1px solid var(--cpp-border);
-    border-radius: var(--cpp-radius);
-    margin-bottom: 8px;
-    background: var(--cpp-surface);
-    box-shadow: var(--cpp-shadow);
-    overflow: hidden;
-    transition: border-color 0.12s ease;
-  }
-  .acc.dirty { border-color: var(--cpp-warn-border); }
-  .acc-head { display: flex; align-items: center; gap: 7px; padding: 9px 10px; cursor: pointer; user-select: none; }
-  .acc-head:hover { background: var(--cpp-surface-2); }
-  .acc-caret { font-size: 8px; color: var(--cpp-text-faint); width: 9px; display: inline-block; flex: 0 0 auto; }
-  .acc-title { flex: 1; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .acc-type {
-    flex: 0 0 auto;
-    font-size: 9px;
-    font-weight: 600;
-    padding: 2px 7px;
-    border-radius: var(--cpp-radius-pill);
-    background: var(--cpp-accent-soft);
-    color: var(--cpp-accent);
-    white-space: nowrap;
-    letter-spacing: 0.01em;
-  }
-  .acc-meta { flex: 0 0 auto; font-size: 10px; color: var(--cpp-text-faint); }
-  .acc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cpp-warn); display: inline-block; flex: 0 0 auto; }
-  .acc-sort { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0; margin-left: 2px; }
+  /* ── 服务设置 ───────────────────────────────────────── */
+  .service-sort { flex: 0 0 16px; display: grid; gap: 1px; }
   .sort-btn {
     background: transparent;
     border: none;
@@ -578,15 +571,32 @@ export const styles = /* css */ `
     cursor: pointer;
     padding: 0 2px;
     font-size: 8px;
-    line-height: 1;
-    min-width: auto;
+    line-height: 1.6;
+    min-width: 16px;
   }
   .sort-btn:hover:not(:disabled) { background: transparent; color: var(--cpp-text); }
-  .acc-body { padding: 4px 11px 11px; border-top: 1px solid var(--cpp-border); }
+  h3.models-title { margin: 0; font-size: 12px; color: var(--cpp-text); letter-spacing: 0; }
+  .provider-connection-fields { display: grid; gap: 0 12px; }
+  .provider-connection-fields > * { min-width: 0; }
+  .provider-preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 4px; }
+  button.provider-preset { display: flex; align-items: center; gap: 8px; padding: 8px; min-width: 0; text-align: left; background: var(--cpp-surface); color: var(--cpp-text); }
+  .provider-preset-icon { flex: 0 0 24px; display: grid; place-items: center; height: 24px; border-radius: var(--cpp-radius-sm); background: var(--cpp-surface-2); }
+  .provider-preset-text { min-width: 0; line-height: 1.3; }
+  .provider-preset-text strong { display: block; font-size: 11px; font-weight: 600; }
+  .provider-preset-text small { display: block; color: var(--cpp-text-dim); font-size: 10px; overflow-wrap: anywhere; }
+  .provider-advanced { padding: 10px; margin: 4px 0 10px; border-radius: var(--cpp-radius); background: var(--settings-tray); }
+  .provider-advanced-fields { display: grid; gap: 0 12px; }
+  .provider-advanced-fields > * { min-width: 0; }
+  @media (min-width: 540px) { .provider-preset-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 620px) {
+    .provider-connection-fields, .provider-advanced-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .provider-advanced-fields > :last-child { grid-column: 1 / -1; }
+  }
 
   .actions-bar {
     display: flex;
     gap: 6px;
+    flex-wrap: wrap;
     justify-content: flex-end;
     align-items: center;
     margin-top: 12px;
@@ -705,19 +715,18 @@ export const styles = /* css */ `
   .autocomplete-item .ac-meta { font-size: 10px; color: var(--cpp-text-faint); margin-top: 1px; }
 
   /* ── Models 区域 ──────────────────────────────────────── */
-  .models-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cpp-border); }
-  .models-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-  .models-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--cpp-text-faint); }
-  .models-header-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .models-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .models-header-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 
   .model-item {
     position: relative;
     border: 1px solid var(--cpp-border);
     border-radius: var(--cpp-radius-sm);
-    margin-bottom: 5px;
-    background: var(--cpp-surface-2);
+    margin-bottom: 4px;
+    background: var(--settings-row);
     overflow: hidden;
   }
+  .model-item.model-opened { border-color: var(--cpp-border-strong); }
 
   /* ── 拖动排序 ──
      插入位置用伪元素画线，不用 border：改 border 会让卡片高度变化，
@@ -760,11 +769,20 @@ export const styles = /* css */ `
   .model-drag-handle:hover { opacity: 1; }
   .model-drag-handle:active { cursor: grabbing; }
 
-  .model-head { display: flex; align-items: center; gap: 7px; padding: 6px 8px; cursor: pointer; user-select: none; font-size: 11px; }
-  .model-head:hover { background: var(--cpp-surface-3); }
+  .model-head { display: flex; align-items: center; gap: 5px; min-height: 30px; padding: 2px 6px; font-size: 11px; }
+  button.model-open { display: flex; align-items: center; text-align: left; min-width: 0; flex: 1; gap: 6px; padding: 4px; color: var(--cpp-text); }
+  button.model-open:focus-visible { outline-offset: -2px; }
+  .model-summary, .model-open-label { flex: none; color: var(--cpp-text-dim); font-size: 10px; }
+  .model-summary { font-variant-numeric: tabular-nums; }
+  .model-open-label { padding: 1px 5px; border-radius: var(--cpp-radius-pill); background: var(--cpp-surface-2); }
+  @media (max-width: 400px) { .model-summary { display: none; } }
+  .model-remove-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; padding: 6px 8px; border: 1px solid var(--cpp-border); border-radius: var(--cpp-radius-sm); }
+  .model-remove-actions > span { margin-right: auto; color: var(--cpp-text-dim); }
+  .model-head .model-remove-checkbox { flex: 0 0 auto; margin: 0; }
+  .model-head .model-remove-checkbox:focus-visible { outline: 2px solid var(--cpp-accent); outline-offset: 2px; }
   .model-body { padding: 4px 10px 10px; border-top: 1px solid var(--cpp-border); background: var(--cpp-surface); }
-  .model-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-  .model-empty { font-size: 10px; color: var(--cpp-text-faint); font-style: italic; padding: 6px 0; }
+  .model-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--cpp-mono); }
+  .model-empty { margin: 0; font-size: 11px; color: var(--cpp-text-dim); text-align: center; padding: 14px 4px; }
 
   /* 模型标题栏右侧 defaultOn 开关 — iOS 风格 toggle switch */
   .model-switch {
@@ -808,55 +826,44 @@ export const styles = /* css */ `
   }
   .model-switch input:checked ~ .model-switch-track { background: var(--cpp-on-track); }
   .model-switch input:checked ~ .model-switch-knob { transform: translateX(14px); }
+  .model-switch input:focus-visible ~ .model-switch-track { outline: 2px solid var(--cpp-accent); outline-offset: 1px; }
 
   /* ── 远程模型列表 ─────────────────────────────────────── */
-  .models-loading-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    background: color-mix(in srgb, var(--cpp-bg) 78%, transparent);
+  .remote-models-panel { min-width: 0; }
+  .model-selection-bar { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 5px; color: var(--cpp-text-dim); font-size: 10px; }
+  .remote-models-list { display: grid; gap: 3px; max-height: clamp(180px, 46vh, 412px); overflow: auto; scrollbar-width: thin; }
+  .remote-models-list .remote-model-item {
     display: flex;
     align-items: center;
-    justify-content: center;
-    border-radius: var(--cpp-radius);
-    backdrop-filter: blur(2px);
-  }
-  .models-loading-spinner { font-size: 11px; color: var(--cpp-text-dim); }
-  .remote-models-panel { margin: 6px 0; border: 1px solid var(--cpp-border-strong); border-radius: var(--cpp-radius-sm); overflow: hidden; }
-  .remote-models-header { display: flex; justify-content: space-between; align-items: center; padding: 5px 9px; background: var(--cpp-surface-2); }
-  .remote-models-title { font-size: 10px; font-weight: 600; color: var(--cpp-text-dim); }
-  .remote-models-list { max-height: 200px; overflow-y: auto; background: var(--cpp-surface); }
-  /*
-    一项两行：主行是可读名，副行是真实 id。
-    display_name 与 id 一致时不显示副行（那种情况是重复信息，白占高度）。
-    id 用等宽字体：混淆过的 id 是随机串，等宽下更易逐字比对。
-  */
-  .remote-model-item {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 4px 9px;
-    font-size: 11px;
-    cursor: pointer;
-    min-width: 0;
-  }
-  .remote-model-name {
+    gap: 8px;
+    margin: 0;
+    padding: 5px 7px;
+    background: var(--settings-row);
+    border-radius: var(--cpp-radius-sm);
     color: var(--cpp-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    text-transform: none;
+    letter-spacing: normal;
+    cursor: pointer;
   }
-  .remote-model-id {
-    font-family: var(--cpp-mono);
-    font-size: 9px;
-    color: var(--cpp-text-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .remote-model-item:hover { background: var(--cpp-accent-soft); }
-  .remote-model-item:hover .remote-model-name { color: var(--cpp-accent); }
-  .remote-model-item:hover .remote-model-id { color: var(--cpp-accent); }
+  .remote-model-item input { flex: 0 0 auto; margin: 0; }
+  .remote-model-item:not(.already-added):is(:hover, :focus-within), .remote-model-item.is-selected { background: color-mix(in srgb, var(--cpp-accent) 15%, var(--settings-canvas)); }
+  .remote-model-item input:focus-visible { outline: 2px solid var(--cpp-accent); outline-offset: 2px; }
+  .remote-model-item.already-added { color: var(--cpp-text-dim); cursor: default; }
+  .remote-model-label { flex: 1; min-width: 0; }
+  .remote-model-name, .remote-model-id { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .remote-model-id { font-family: var(--cpp-mono); font-size: 10px; color: var(--cpp-text-dim); }
+  .remote-model-added { flex: 0 0 auto; padding: 1px 5px; border-radius: var(--cpp-radius-pill); background: var(--cpp-surface-2); font-size: 10px; color: var(--cpp-text-dim); }
+  .model-import-paste { padding: 6px 0 0; }
+  .model-import-review, .model-list-recovery { padding: 8px; }
+  .model-import-paste > button { margin-top: 6px; }
+  .model-import-review, .model-list-recovery { margin: 2px 0; border-radius: var(--cpp-radius-sm); background: var(--cpp-surface); overflow-wrap: anywhere; }
+  .model-import-review > p { margin: 0 0 6px; }
+  .model-import-actions, .model-import-issues { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px; }
+  .model-import-actions { justify-content: flex-end; }
+  .remote-models-panel > .model-import-actions { padding-top: 6px; }
+  .model-import-actions > span { margin-right: auto; color: var(--cpp-text-dim); }
+  .model-import-issues { margin-bottom: 8px; }
+  .model-import-issues button { white-space: normal; overflow-wrap: anywhere; }
 
   /* ── Quick Switch ─────────────────────────────────────── */
   .qs-section { margin-top: 8px; border: 1px solid var(--cpp-border); border-radius: var(--cpp-radius-sm); overflow: hidden; }
@@ -1205,202 +1212,131 @@ export const styles = /* css */ `
   button.danger-solid { background: var(--cpp-danger); color: #fff; border-color: transparent; }
   button.danger-solid:hover:not(:disabled) { background: var(--cpp-danger); opacity: 0.88; }
 
-  /* ── 用量 / 缓存仪表盘 ─────────────────────────────────── */
-  .usage-body { display: flex; flex-direction: column; gap: 10px; }
-  .usage-empty {
-    font-size: 10px;
-    line-height: 1.6;
-    color: var(--cpp-text-dim);
-    padding: 10px;
-    background: var(--cpp-surface-2);
+  /* ── 仪表盘 ── */
+  .dashboard-page { max-width: 960px; margin: 16px auto 0; }
+  .dashboard-page h2 { margin: 0; font-size: 15px; font-weight: 680; }
+  .dashboard-page h3 { margin: 0; font-size: 13px; color: var(--cpp-text); letter-spacing: 0; }
+  .dashboard-page button.dashboard-action { padding: 5px 9px; min-height: 28px; font-size: 11px; white-space: nowrap; }
+  .dashboard-service, .usage-scope, .usage-detail {
     border: 1px solid var(--cpp-border);
-    border-radius: var(--cpp-radius-sm);
+    border-radius: 10px;
+    padding: 12px;
   }
-  .usage-empty code {
-    font-family: var(--cpp-mono);
-    font-size: 10px;
-    padding: 1px 4px;
-    border-radius: 4px;
-    background: var(--cpp-surface-3);
-    color: var(--cpp-text);
-    overflow-wrap: anywhere;
-  }
-
-  .usage-label {
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--cpp-text-faint);
-  }
-
-  /*
-    口径块：今日 / 全部累计。
-    上下排开而不是并排 —— 两个块回答的是不同问题（"今天有没有白花" vs
-    "总体上省了多少"），时间尺度也不同，并排会诱使人横向比较，而那个比较
-    没有意义。上下排开各自成块，读的时候就不会串。
-  */
-  .usage-scopes { display: flex; flex-direction: column; gap: 10px; }
-  .usage-scope { display: flex; flex-direction: column; gap: 6px; }
-  /*
-    块的标题条：左侧是口径名，右侧是这段时间的起止。
-    只给左侧加一道强调色竖线 —— 两个块结构完全相同，没有这个记号的话
-    视线容易把"全部累计"的数字当成"今日"的。
-  */
-  .usage-scope-head {
+  .dashboard-service, .usage-header, .usage-scope-head, .usage-detail-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding-left: 7px;
-    border-left: 2px solid var(--cpp-accent);
+    flex-wrap: wrap;
+    gap: 6px 10px;
   }
-  .usage-scope-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    color: var(--cpp-text);
-  }
-  .usage-scope-range { font-size: 9px; font-family: var(--cpp-mono); color: var(--cpp-text-faint); }
+  .dashboard-service { background: var(--cpp-surface); }
+  .dashboard-service-status { display: flex; gap: 9px; align-items: flex-start; }
+  .dashboard-service-status .dot { margin-top: 7px; }
+  .dashboard-service-status h2 { font-size: 13px; }
+  .dashboard-service-status p { margin: 2px 0 0; color: var(--cpp-text-dim); font-size: 11px; }
+  .dashboard-service-actions { display: flex; align-items: center; gap: 8px; }
+  .dashboard-version, .usage-scope-range, .usage-period, .usage-axis { color: var(--cpp-text-dim); font-size: 11px; }
+  .dashboard-version, .usage-scope-range, .usage-axis { font-variant-numeric: tabular-nums; }
+  .usage { margin-top: 18px; }
+  .usage-header { margin-bottom: 10px; }
+  .usage-body > .notice { margin: 0 0 10px; }
+  .usage-content, .usage-scopes { display: grid; gap: 10px; }
+  .usage-scopes { grid-template-columns: minmax(0, 1fr); }
+  .usage-scope { min-width: 0; background: var(--cpp-surface); }
+  .usage-cache { margin-top: 12px; }
+  .usage-cache-main { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 3px 9px; }
+  .usage-label, .usage-metrics dt, .usage-cache-details { color: var(--cpp-text-dim); font-size: 11px; }
+  .usage-value { margin: 0; color: var(--cpp-text); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .usage-rate { font-size: 27px; letter-spacing: -0.02em; line-height: 1.1; }
+  .usage-cache-meter { height: 5px; margin: 8px 0 6px; border-radius: var(--cpp-radius-pill); background: var(--cpp-surface-3); overflow: hidden; }
+  .usage-cache-meter > span { display: block; height: 100%; max-width: 100%; border-radius: inherit; background: var(--cpp-accent); }
+  .usage-cache-details { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
+  .usage-cache-details strong { color: var(--cpp-text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; padding-top: 9px; border-top: 1px solid var(--cpp-border); }
+  .usage-metrics > div { min-width: 0; }
+  .usage-empty { margin: 0; padding: 13px; border: 1px dashed var(--cpp-border-strong); border-radius: var(--cpp-radius); color: var(--cpp-text-dim); }
+  .usage-empty-inline { margin-top: 9px; padding: 9px 10px; font-size: 11px; }
+  .usage-window { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--cpp-text-dim); }
+  .usage-window-options { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--cpp-border); border-radius: var(--cpp-radius); }
+  .usage-window-options button { padding: 4px 8px; border: 0; background: transparent; color: var(--cpp-text); font-size: 11px; white-space: nowrap; }
+  .usage-window-options button:hover:not(:disabled) { background: var(--cpp-surface-3); }
+  .usage-window-options button[aria-pressed='true'] { background: var(--cpp-accent); color: var(--cpp-accent-fg); }
 
-  /*
-    指标网格：6 等分，小卡片各占 2 份（一行三块），主指标占满一行。
-    用 6 等分而不是 3 等分，是为了让主指标能跨满整行、小卡片又能三等分 ——
-    3 等分做不到"一行三块 + 整行通栏"两种跨度并存。
-  */
-  .usage-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
-  .usage-metric {
-    grid-column: span 2;
-    min-width: 0;
-    padding: 8px 9px;
-    border-radius: var(--cpp-radius-sm);
-    background: var(--cpp-surface);
-    border: 1px solid var(--cpp-border);
-  }
-  /* 命中率是这张面板的主指标，占满整行、字号也大一档 */
-  .usage-metric-hero { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1px; }
-  .usage-value {
-    margin-top: 3px;
-    font-family: var(--cpp-mono);
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--cpp-text);
-    overflow-wrap: anywhere;
-  }
-  .usage-metric-hero .usage-value { font-size: 26px; }
-  .usage-sub { margin-top: 1px; font-size: 9px; font-family: var(--cpp-mono); color: var(--cpp-text-faint); overflow-wrap: anywhere; }
-
-  /* 命中率配色：>=60% 正常，>=20% 偏低，<20% 基本等于没生效 */
-  .tone-ok { color: var(--cpp-ok); }
-  .tone-warn { color: var(--cpp-warn); }
-  .tone-bad { color: var(--cpp-danger); }
-  .tone-flat { color: var(--cpp-text-dim); }
-
-  .usage-chart-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .usage-legend { display: flex; align-items: center; gap: 4px; font-size: 9px; color: var(--cpp-text-faint); }
-  .usage-swatch { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
-  .usage-swatch-cached { background: var(--cpp-accent); }
-  .usage-swatch-new { background: var(--cpp-surface-3); border: 1px solid var(--cpp-border-strong); }
-
-  /*
-    柱状图：定高容器 + 百分比高度。
-    align-items:flex-end 让柱子从底部生长，配合 grid 等分 14 列。
-    每根柱子内部再套一个 cached 层，用 bottom 对齐形成堆叠效果。
-  */
+  .usage-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 8px 0; color: var(--cpp-text-dim); font-size: 11px; }
+  .usage-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+  .usage-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+  .usage-swatch-cached, .usage-col-cached { background: var(--cpp-accent); }
+  .usage-swatch-write, .usage-col-write { background: color-mix(in srgb, var(--cpp-accent) 66%, var(--cpp-surface-3)); }
+  .usage-swatch-new, .usage-col { background: color-mix(in srgb, var(--cpp-accent) 31%, var(--cpp-surface-3)); }
   .usage-chart {
     position: relative;
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
-    gap: 2px;
-    align-items: end;
-    height: 64px;
-    padding: 4px;
-    background: var(--cpp-surface-2);
-    border: 1px solid var(--cpp-border);
-    border-radius: var(--cpp-radius-sm);
+    grid-template-rows: minmax(0, 1fr);
+    gap: clamp(2px, 0.9vw, 8px);
+    height: 94px;
+    border-bottom: 1px solid var(--cpp-border-strong);
+    background: repeating-linear-gradient(to top, transparent 0 calc(33.333% - 1px), var(--cpp-border) calc(33.333% - 1px) 33.333%);
   }
-  .usage-slot { position: relative; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
-  .usage-col {
-    position: relative;
-    width: 100%;
-    min-height: 2px;
-    border-radius: 2px;
-    background: var(--cpp-surface-3);
-    border: 1px solid var(--cpp-border-strong);
-    overflow: hidden;
+  .usage-chart button.usage-slot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    min-width: 0;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
   }
-  .usage-col-cached {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--cpp-accent);
-  }
-  /* 整列都参与命中，柱本身窄，1px 的边框会显得柱子很虚 */
-  .usage-slot:hover .usage-col { border-color: var(--cpp-accent); }
-  .usage-slot:hover .usage-col-cached { background: var(--cpp-accent-hover); }
-  .usage-axis { font-size: 9px; font-family: var(--cpp-mono); color: var(--cpp-text-faint); text-align: center; }
-
-  /*
-    悬浮详情 —— 不用原生 title。
-    原生 tooltip 由操作系统绘制，延迟约 1s、无法做动画，在 14 根柱子之间横向
-    对比时"等它弹出来"很拖沓；而且它不跟随柱子的位置，读数时要来回找。
-    这里自己做一层：位置按列索引算，首尾两列夹在容器内不会溢出面板。
-    显隐用 opacity + transform 而不是 display，否则过渡不会触发。
-  */
+  .usage-chart button.usage-slot:hover, .usage-chart button.usage-slot:focus-visible { background: var(--cpp-surface); }
+  .usage-chart button.usage-slot:focus-visible { outline: 2px solid var(--cpp-accent); outline-offset: -2px; }
+  .usage-col { display: flex; flex-direction: column-reverse; width: 100%; max-width: 34px; border-radius: 4px 4px 0 0; overflow: hidden; }
+  .usage-col-cached, .usage-col-write { flex: 0 0 auto; }
+  .usage-axis { margin-top: 6px; }
   .usage-tip {
     position: absolute;
     bottom: calc(100% + 6px);
-    left: 50%;
+    left: clamp(77px, var(--usage-tip-center, 50%), calc(100% - 77px));
     z-index: 30;
-    min-width: 140px;
-    padding: 6px 8px;
-    border-radius: var(--cpp-radius-sm);
-    /*
-      底色必须不透明 —— 这是浮在图表/指标卡之上的读数面板，用 surface（4~11% 墨水）
-      当底会直接把底下的数字透上来叠字。走 --cpp-hover-* 那条链：优先取宿主的
-      editorHoverWidget 色，取不到就退到 editorWidget（控件底色），两者都是实色。
-    */
+    width: 154px;
+    padding: 8px 9px;
+    border-radius: var(--cpp-radius);
     background: var(--cpp-hover-bg);
     border: 1px solid var(--cpp-hover-border);
     color: var(--cpp-hover-fg);
     box-shadow: var(--cpp-shadow-lg);
-    font-size: 10px;
-    line-height: 1.5;
+    font-size: 11px;
     pointer-events: none;
     opacity: 0;
-    transform: translateX(-50%) translateY(4px) scale(0.97);
+    transform: translate(-50%, 4px);
     transition: opacity 0.12s ease, transform 0.12s ease;
   }
-  .usage-tip.is-open { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-  .usage-tip-date {
-    font-family: var(--cpp-mono);
-    font-weight: 700;
-    margin-bottom: 3px;
-    padding-bottom: 3px;
-    border-bottom: 1px solid var(--cpp-border);
-  }
-  .usage-tip-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .usage-tip-label { color: var(--cpp-text-faint); }
-  .usage-tip-value { font-family: var(--cpp-mono); font-weight: 600; }
+  .usage-tip.is-open { opacity: 1; transform: translateX(-50%); }
+  .usage-tip-date { font-weight: 700; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid var(--cpp-border); }
+  .usage-tip-row { display: flex; justify-content: space-between; gap: 6px; }
+  @media (prefers-reduced-motion: reduce) { .usage-tip { transition: none; } }
 
-  .usage-table-head { display: flex; align-items: center; justify-content: space-between; }
-  .usage-table { display: flex; flex-direction: column; gap: 3px; }
-  .usage-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
-    border-radius: var(--cpp-radius-sm);
-    background: var(--cpp-surface-2);
-    border: 1px solid var(--cpp-border);
+  .usage-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .usage-table th, .usage-table td { text-align: left; padding: 7px 0; }
+  .usage-table th { color: var(--cpp-text-dim); font-size: 11px; font-weight: 600; }
+  .usage-table td { border-top: 1px solid var(--cpp-border); }
+  .usage-table :is(th, td):first-child { width: 100%; overflow-wrap: anywhere; }
+  .usage-table :is(th, td):not(:first-child) { padding-left: 10px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .usage-row-model, .usage-row-provider { display: block; font-size: 11px; }
+  .usage-row-provider, .usage-row-calls { font-size: 11px; color: var(--cpp-text-dim); }
+  .usage-row-rate { font-size: 12px; font-weight: 700; }
+  .usage-row-input { font-weight: 650; }
+  .usage-row-input-inline { display: none; font-size: 11px; color: var(--cpp-text-dim); }
+  @media (max-width: 470px) {
+    .usage-table .usage-row-input { display: none; }
+    .usage-row-input-inline { display: block; }
   }
-  .usage-row-name { min-width: 0; display: flex; flex-direction: column; }
-  .usage-row-model { font-size: 10px; font-family: var(--cpp-mono); color: var(--cpp-text); overflow-wrap: anywhere; }
-  .usage-row-provider { font-size: 9px; color: var(--cpp-text-faint); overflow-wrap: anywhere; }
-  .usage-row-rate { font-size: 11px; font-weight: 700; font-family: var(--cpp-mono); }
-  .usage-row-calls { font-size: 9px; font-family: var(--cpp-mono); color: var(--cpp-text-faint); }
+  .tone-ok { color: var(--cpp-ok); }
+  .tone-warn { color: var(--cpp-warn); }
+  .tone-bad { color: var(--cpp-danger); }
+  .tone-flat { color: var(--cpp-text-dim); }
+  @media (min-width: 650px) { .usage-scopes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 `

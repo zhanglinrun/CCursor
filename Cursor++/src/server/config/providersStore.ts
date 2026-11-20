@@ -31,7 +31,7 @@ let reverseIndex: Map<string, ResolvedProviderModel> = new Map()
 function rebuildIndex(config: ProvidersConfig): Map<string, ResolvedProviderModel> {
   const idx = new Map<string, ResolvedProviderModel>()
   for (const provider of config.providers) {
-    if (!Array.isArray(provider.models))
+    if (provider.enabled === false || !Array.isArray(provider.models))
       continue
     for (const model of provider.models) {
       const existing = idx.get(model.id)
@@ -105,6 +105,7 @@ function withFallback(loaded: Partial<ProvidersConfig> | null): ProvidersConfig 
       baseUrl: provider.baseUrl ?? '',
       auth: provider.auth ?? { kind: 'apiKey', value: '' },
       models: Array.isArray(provider.models) ? normalizeModelOverrides(provider.id, provider.models) : [],
+      ...(typeof provider.enabled === 'boolean' ? { enabled: provider.enabled } : {}),
       ...(provider.proxyUrl ? { proxyUrl: provider.proxyUrl } : {}),
       ...(provider.headers && typeof provider.headers === 'object' && Object.keys(provider.headers).length > 0 ? { headers: provider.headers } : {}),
     })
@@ -182,6 +183,8 @@ export function flattenModels(): ResolvedProviderModel[] {
   const config = cache ?? loadProviders()
   const out: ResolvedProviderModel[] = []
   for (const provider of config.providers) {
+    if (provider.enabled === false)
+      continue
     for (const model of provider.models) {
       // 与 reverseIndex 一致: 跨 provider 重名只保留第一个
       if (out.some(x => x.model.id === model.id))

@@ -695,19 +695,19 @@ export async function performSearchTest(
     ? `${(baseUrl || 'https://api.tavily.com').replace(/\/+$/, '')}/search`
     : providerType === 'firecrawl'
       ? `${(baseUrl || 'https://api.firecrawl.dev').replace(/\/+$/, '')}/v1/search`
-      : `(official ${providerType} endpoint)`
+      : `${providerType} 官方接口`
 
   if (providerType !== 'duckduckgo' && !apiKey)
-    throw new Error('API key is empty')
+    throw new Error('请填写 API 密钥')
 
   const startedAt = Date.now()
   const results = await searchWithProvider(provider, 'cursor ide byok test', 3)
   const elapsedMs = Date.now() - startedAt
 
   if (results.length === 0)
-    throw new Error(`Reached ${endpoint} but it returned 0 results — check quota or key scope`)
+    throw new Error(`已连接 ${endpoint}，但未返回搜索结果。请检查额度和密钥权限。`)
 
-  return `OK — ${results.length} result(s) in ${elapsedMs}ms via ${endpoint}`
+  return `连接成功，返回 ${results.length} 条结果，耗时 ${elapsedMs} 毫秒（${endpoint}）`
 }
 
 /**
@@ -726,13 +726,13 @@ export async function performFetchTest(
     const loaded = loadSupermarkdown()
     if (!loaded.ok)
       throw new Error(supermarkdownUnavailableMessage(loaded.error))
-    return 'OK — built-in HTML→Markdown converter available'
+    return '连接成功，内置 HTML 转 Markdown 组件可用'
   }
 
   if (providerType !== 'tavily')
-    throw new Error(`Unknown fetch provider: ${providerType}`)
+    throw new Error(`未知的抓取服务：${providerType}`)
   if (!apiKey)
-    throw new Error('API key is empty — Tavily fetch reuses the key from the Search tab')
+    throw new Error('请在「搜索」页填写 Tavily API 密钥')
 
   const endpoint = `${(baseUrl || 'https://api.tavily.com').replace(/\/+$/, '')}/extract`
   const startedAt = Date.now()
@@ -743,7 +743,7 @@ export async function performFetchTest(
   // fetchTavily 内部会做 Discourse JSON 解析，普通页面原样返回；
   // 走到这里只要拿到非空正文就算链路通。
   if (!result.markdown.trim())
-    throw new Error(`Reached ${endpoint} but it returned empty content — check quota or key scope`)
+    throw new Error(`已连接 ${endpoint}，但未返回正文。请检查额度和密钥权限。`)
 
-  return `OK — ${result.markdown.length} chars in ${elapsedMs}ms via ${endpoint}`
+  return `连接成功，返回 ${result.markdown.length} 个字符，耗时 ${elapsedMs} 毫秒（${endpoint}）`
 }

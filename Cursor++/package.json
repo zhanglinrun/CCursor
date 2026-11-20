@@ -10,10 +10,6 @@
   "extensionKind": [
     "ui"
   ],
-  "enabledApiProposals": [
-    "cursor",
-    "cursorAgentHost"
-  ],
   "extensionDependencies": [],
   "engines": {
     "vscode": "^1.100.0"
@@ -42,6 +38,10 @@
       {
         "command": "cursor2plus.openSettings",
         "title": "Cursor++: Open Settings"
+      },
+      {
+        "command": "cursor2plus.injectRouting",
+        "title": "Cursor++: 重新注入"
       },
       {
         "command": "cursor2plus.toggleFileLog",
@@ -91,7 +91,7 @@
         {
           "type": "webview",
           "id": "cursor2plus.panel",
-          "name": "Control Panel"
+          "name": "控制面板"
         }
       ]
     }

@@ -15,7 +15,7 @@
  * 丢了这个字段，用户面对的就是一列乱码。
  */
 
-import type { CatalogEntry } from './catalogModelDefaults'
+import type { CatalogMatch } from './catalogModelDefaults'
 
 /** 上游一条模型（归一化后） */
 export interface RemoteModelEntry {
@@ -30,7 +30,7 @@ export interface RemoteModelEntry {
   contextTokenLimit?: number
   maxOutputTokens?: number
   /** Backend resolves metadata without replacing the endpoint's model id. */
-  catalog?: CatalogEntry
+  catalog?: CatalogMatch
 }
 
 function firstNonEmptyString(...candidates: unknown[]): string {

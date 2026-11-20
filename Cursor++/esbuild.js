@@ -120,12 +120,27 @@ async function main() {
     plugins: [esbuildProblemMatcherPlugin],
   });
 
+  // ── Context 3: Reinject worker run by Cursor's Electron binary ──
+  // acorn is bundled, so a VSIX-only install needs no npm install or Node.
+  const restartCtx = await esbuild.context({
+    entryPoints: [join(__dirname, "..", "installer", "src", "restart-inject.js")],
+    bundle: true,
+    format: "cjs",
+    minify: production,
+    sourcemap: false,
+    platform: "node",
+    target: "node18",
+    outfile: "dist/restart-inject.cjs",
+    logLevel: "silent",
+    plugins: [esbuildProblemMatcherPlugin],
+  });
+
   if (watch) {
     copyRuntimeAssets();
-    await Promise.all([extCtx.watch(), webCtx.watch()]);
+    await Promise.all([extCtx.watch(), webCtx.watch(), restartCtx.watch()]);
   } else {
-    await Promise.all([extCtx.rebuild(), webCtx.rebuild()]);
-    await Promise.all([extCtx.dispose(), webCtx.dispose()]);
+    await Promise.all([extCtx.rebuild(), webCtx.rebuild(), restartCtx.rebuild()]);
+    await Promise.all([extCtx.dispose(), webCtx.dispose(), restartCtx.dispose()]);
     copyRuntimeAssets();
   }
 }

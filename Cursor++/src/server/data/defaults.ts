@@ -191,6 +191,8 @@ export interface ProviderModel {
    * effectiveProviderType。
    */
   type?: ProviderType
+  /** Exact request path for a custom endpoint, resolved against the provider origin. */
+  customRequestPath?: string
   displayName: string
   thinking: boolean
   /** 统一思考档位 — 优先用于 OpenAI/Gemini/Anthropic 4.5-opus+/4.6+ */
@@ -274,6 +276,8 @@ export function isModelDefaultOn(model: ProviderModel): boolean {
 export interface ProviderEntry {
   id: string
   name: string
+  /** Defaults to enabled when omitted. */
+  enabled?: boolean
   /**
    * 中转站的缺省协议 —— 界面已不再暴露这个字段。
    *

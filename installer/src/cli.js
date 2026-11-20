@@ -3,6 +3,7 @@
  *
  * Usage:
  *   node installer/dist/cli.cjs install     # Install extension + apply patches
+ *   node installer/dist/cli.cjs inject      # Apply routing patches
  *   node installer/dist/cli.cjs uninstall   # Remove extension + restore patches
  *   node installer/dist/cli.cjs status      # Check installation status
  */
@@ -11,6 +12,7 @@ import { install } from './install.js';
 import { uninstall } from './uninstall.js';
 import { status } from './status.js';
 import { check } from './check.js';
+import { checkRouting, inject } from './inject.js';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { patchLocalMode } from './patch-local-mode.js';
 import { restoreBackup } from './backup.js';
@@ -25,11 +27,15 @@ const command = process.argv[2];
 
 const commands = {
   install,
+  inject: async () => {
+    if (process.argv.length > 3) throw new Error('Run "ccursor inject" without additional arguments.');
+    await inject();
+  },
   uninstall,
   update,
   upgrade: update,
   status,
-  check,
+  check: () => process.argv[3] === '--routing-only' ? checkRouting() : check(),
   'local-mode': async () => {
     const info = msg => console.log(`\x1b[34m[>]\x1b[0m ${msg}`);
     const { paths, diagnostic } = findCursorPathsDetailed();
@@ -64,12 +70,14 @@ ccursor — Cursor++ BYOK Installer
 
 Commands:
   install          Install Cursor++ extension and apply patches
+  inject           Preflight and apply routing patches for a user-installed VSIX
   uninstall        Remove extension and restore all patches
   update           Upgrade: uninstall then reinstall
   local-mode       Standalone tool: enable Cursor's built-in Local Agent mode
   local-mode-off   Standalone tool: disable Local Agent mode (restore originals)
   status           Check current installation status
   check            Dry-run: verify AST patch targets are matchable
+  check --routing-only  Dry-run the same preflight used by inject
   help             Show this help message
 `);
   },

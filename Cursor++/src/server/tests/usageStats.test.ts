@@ -134,6 +134,17 @@ describe('aggregateUsage', () => {
     expect(summary.window.calls).toBe(1)
   })
 
+  it('模型与日趋势使用相同的最近 14 个本地自然日', () => {
+    const outside = recordAt(new Date(2026, 5, 6, 18).getTime(), { model: 'outside' })
+    const firstDay = recordAt(new Date(2026, 5, 7, 0, 0).getTime(), { model: 'first-day' })
+    const summary = aggregateUsage([outside, firstDay, recordAt(now)], { windowDays: 14, now })
+    expect(summary.byDay[0]).toMatchObject({ date: '2026-06-07', calls: 1 })
+    expect(summary.byModel.map(row => row.model)).not.toContain('outside')
+    expect(summary.byDay.reduce((total, day) => total + day.calls, 0)).toBe(2)
+    expect(summary.byModel.reduce((total, row) => total + row.calls, 0)).toBe(2)
+    expect(summary.allTime.calls).toBe(3)
+  })
+
   it('汇总 prompt/输出/缓存读写并算出整体命中率', () => {
     const records = [
       recordAt(now, { promptTokens: 1000, cacheReadTokens: 900, nonCachedInputTokens: 100, outputTokens: 10 }),

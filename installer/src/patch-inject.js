@@ -135,7 +135,7 @@ function findFunctionStarts(source, from, windowSize) {
 //   4. EventSource 订阅 /byok/events —— refresh 事件驱动刷新, routes 事件热更新
 //      REST 白名单（白名单同时是 BYOK ON/OFF 的判据）
 
-export function buildHookPayload(hasGlass, label, routes = loadRoutes()) {
+export function buildHookPayload(hasGlass, label, routes = loadRoutes(), { routingOnly = false } = {}) {
   const BYOK_HOST = routes.server.host;
   const BYOK_PORT = routes.server.port;
   const COLLECTOR_HOST = routes.collector.host;
@@ -210,9 +210,10 @@ export function buildHookPayload(hasGlass, label, routes = loadRoutes()) {
 
   const glassStatus = `(function(){var _bEl=null,_bTip=null,_bSrv=false,_bMode=false;function _bCreate(){var e=document.createElement("button");e.type="button";e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.id="byok-glass-status";if(_hasGlass){var donor=document.querySelector("button.ui-icon-button");if(donor){e.className=donor.className}else{e.className="ui-icon-button"}e.style.cssText="width:auto;min-width:auto;font-size:10px;gap:2px;white-space:nowrap;"}else{e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.style.cssText="font-size:11px;gap:3px;width:auto;white-space:nowrap;"}e.addEventListener("click",function(){var target=_bMode?0:1;fetch(_byokUrl+"/byok/mode",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({byokMode:target,source:"glass"})}).then(function(r){return r.status===404?fetch(_byokUrl+"/byok/toggle",{method:"POST"}):r}).then(function(r){return r.json()}).then(function(d){console.log("[BYOK] mode \\u2192",d.byokMode?"ON":"OFF",d.changed===false?"(unchanged)":"")}).catch(function(e){console.warn("[BYOK] mode change failed:",e&&e.message||e)})});e.addEventListener("mouseenter",function(){_bShowTip()});e.addEventListener("mouseleave",function(){_bHideTip()});return e}function _bShowTip(){if(_bTip||!_bEl)return;var t=document.createElement("div");t.className="ui-tooltip";t.setAttribute("role","tooltip");t.style.cssText="position:fixed;z-index:99999;pointer-events:none;box-sizing:border-box;width:max-content;max-width:320px;background:var(--cursor-bg-elevated);color:var(--cursor-text-primary);border:var(--ui-tooltip-border-width,1px) solid var(--cursor-stroke-primary);border-radius:var(--ui-tooltip-border-radius,var(--cursor-radius-lg));box-shadow:var(--ui-tooltip-box-shadow,var(--cursor-box-shadow-popup));padding:var(--ui-tooltip-padding-y,var(--cursor-spacing-1-5)) var(--ui-tooltip-padding-x,var(--cursor-spacing-2-5));font-size:var(--ui-tooltip-font-size,var(--cursor-font-size-base));line-height:var(--ui-tooltip-line-height,var(--cursor-line-height-base));letter-spacing:var(--ui-tooltip-letter-spacing,var(--cursor-letter-spacing-base));white-space:pre-line;";t.textContent=(_bSrv?"Server online":"Server offline")+" \\u00B7 "+(_bMode?"BYOK ON":"BYOK OFF");document.body.appendChild(t);var r=_bEl.getBoundingClientRect();var tw=t.offsetWidth,th=t.offsetHeight;t.style.left=Math.round(r.left+r.width/2-tw/2)+"px";t.style.top=Math.round(r.top-th-6)+"px";_bTip=t}function _bHideTip(){if(_bTip){_bTip.remove();_bTip=null}}function _bRender(){if(!_bEl)return;var icon=_bSrv?"\\u2713":"\\u2717";var glyph=_bMode?"\\u25C9":"\\u25CB";_bEl.textContent=icon+" BYOK "+glyph}function _bInject(){if(_bEl&&document.contains(_bEl))return;var footer=document.querySelector('[data-component="glass-sidebar-footer"]');if(footer){var gear=footer.querySelector("button.ui-icon-button");if(gear&&gear.parentElement){_bEl=_bCreate();_bRender();gear.parentElement.insertBefore(_bEl,gear);return}}var trigger=document.querySelector(".glass-sidebar-footer-account-trigger");var endIcon=trigger&&trigger.querySelector(".ui-sidebar-menu-button-end");if(trigger&&endIcon){_bEl=_bCreate();_bRender();trigger.insertBefore(_bEl,endIcon);return}var actOld=document.querySelector(".glass-sidebar-footer-actions-right");if(actOld){_bEl=_bCreate();_bRender();actOld.insertBefore(_bEl,actOld.firstChild)}}if(document.body){var _bObs=new MutationObserver(function(){_bInject()});_bObs.observe(document.body,{childList:true,subtree:true});_bInject()}globalThis.__byokGlassStatus=function(srv,mode){if(srv!==void 0)_bSrv=srv;if(mode!==void 0)_bMode=mode;_bRender()}})();`;
 
-  const refreshLogic = `globalThis.__byokRefreshModels=function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("rpc-routes",function(ev){try{var rules=JSON.parse(ev.data);_rpcRules=new Set(rules);try{localStorage.setItem(_byokModeKey,rules.length>0?"1":"0")}catch(x){}if(_byokTopology&&!_byokTopology.byokOn&&rules.length>0)console.warn("[BYOK] remote window ("+_byokTopology.remote+"): BYOK turned on after startup but the remote agent host is still active \\u2014 Reload Window to route Agent requests through BYOK");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,rules.length>0);console.log("[BYOK] ConnectRPC routes hot-reloaded: "+rules.length+" rules"+(_isGlassWindow?" (glass: renderer-level routing)":""))}catch(e){console.warn("[BYOK] rpc-routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
+  const forceRefresh = routingOnly ? '' : `globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);`;
+  const refreshLogic = `globalThis.__byokRefreshModels=function(){${forceRefresh}if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("rpc-routes",function(ev){try{var rules=JSON.parse(ev.data);_rpcRules=new Set(rules);try{localStorage.setItem(_byokModeKey,rules.length>0?"1":"0")}catch(x){}if(_byokTopology&&!_byokTopology.byokOn&&rules.length>0)console.warn("[BYOK] remote window ("+_byokTopology.remote+"): BYOK turned on after startup but the remote agent host is still active \\u2014 Reload Window to route Agent requests through BYOK");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,rules.length>0);console.log("[BYOK] ConnectRPC routes hot-reloaded: "+rules.length+" rules"+(_isGlassWindow?" (glass: renderer-level routing)":""))}catch(e){console.warn("[BYOK] rpc-routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
 
-  return main + refreshLogic + pickerRefresh + glassNativeRefresh + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
+  return main + refreshLogic + pickerRefresh + (routingOnly ? '' : glassNativeRefresh) + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
 }
 
 // ---- AST fingerprinting + patch ----
@@ -652,15 +653,14 @@ function patchGlassExtensionAllowlist(code, log) {
   return result;
 }
 
-function patchSingleWorkbench(filePath, label, paths, log) {
-  const code = readFileSync(filePath, 'utf-8');
-
+export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = false } = {}) {
   if (isInjectCurrent(code)) {
     log?.(`[inject] ${label}: already patched`);
-    return;
+    return code;
   }
   if (isInjectPatched(code)) {
-    throw new Error(`${label}: renderer hook is outdated (missing ${HOOK_PAYLOAD_REV}) — run "ccursor update"`);
+    const nextStep = routingOnly ? 'restore a clean copy of this Cursor build' : 'run "ccursor update"';
+    throw new Error(`${label}: renderer hook is outdated (missing ${HOOK_PAYLOAD_REV}) — ${nextStep}`);
   }
   if (code.includes(HOOK_MARKER) || code.includes(HOOK_SOURCE_MARKER)) {
     throw new Error(`${label}: partial renderer hook detected (payload/call-site mismatch)`);
@@ -681,27 +681,31 @@ function patchSingleWorkbench(filePath, label, paths, log) {
   patched = topology.source;
   if (topology.changed) log?.(`  Agent host topology guarded (remote + BYOK → legacy), RHS "${topology.rhs}"`);
   // 3. 注入 hook payload (放最前面优先执行)
-  const payload = buildHookPayload(paths.hasGlass, label);
+  const payload = buildHookPayload(paths.hasGlass, label, undefined, { routingOnly });
+  if (routingOnly) {
+    try {
+      acorn.parse(payload, { ecmaVersion: 'latest', sourceType: 'script' });
+    } catch (error) {
+      throw new Error(`${label}: renderer routing payload failed to parse: ${error.message}`);
+    }
+  }
   patched = `/* CURSOR-BYOK-HOOK-START */${payload}/* CURSOR-BYOK-HOOK-END */;${patched}`;
-  // 4. MAX Mode toggle: 数据驱动隐藏
-  patched = patchMaxModeToggle(patched, log);
-  // 5. KaTeX math SVG sanitizer: 放行根号 / stretchy delimiter 所需 inline SVG
-  patched = patchKatexMathSvgSanitizer(patched, log);
-  // 6. Glass Window (Agent Window) 扩展白名单放行
-  patched = patchGlassExtensionAllowlist(patched, log);
-  // 7. Agent Window：复用 IDE 窗口的刷新链路（捕获 aiService + 允许未认证时强制刷新）
-  if (label === 'glass') {
-    const refresh = patchGlassModelRefresh(patched, log);
-    patched = refresh.source;
-    if (!isGlassRefreshPatched(patched))
-      throw new Error('glass refresh patch verification failed');
+  if (!routingOnly) {
+    // Legacy installer extras: MAX Mode, KaTeX SVG, extension allowlist, and Glass refresh.
+    patched = patchMaxModeToggle(patched, log);
+    patched = patchKatexMathSvgSanitizer(patched, log);
+    patched = patchGlassExtensionAllowlist(patched, log);
+    if (label === 'glass') {
+      const refresh = patchGlassModelRefresh(patched, log);
+      patched = refresh.source;
+      if (!isGlassRefreshPatched(patched))
+        throw new Error('glass refresh patch verification failed');
+    }
   }
 
   if (!patched.includes(HOOK_MARKER)) throw new Error(`Verification failed for ${label}`);
 
-  createBackup(filePath, 'inject', log);
-  writeFileSync(filePath, patched);
-  updateChecksums(paths, [filePath], 'inject', log);
+  return patched;
 }
 
 export function patchInject(paths, log) {
@@ -716,7 +720,12 @@ export function patchInject(paths, log) {
       continue;
     }
     log?.(`[inject] Patching ${label} workbench.js...`);
-    patchSingleWorkbench(path, label, paths, log);
+    const code = readFileSync(path, 'utf-8');
+    const patched = prepareWorkbenchPatch(code, label, paths, log);
+    if (patched === code) continue;
+    createBackup(path, 'inject', log);
+    writeFileSync(path, patched);
+    updateChecksums(paths, [path], 'inject', log);
   }
 
   log?.('[inject] Done');

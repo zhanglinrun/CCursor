@@ -18,14 +18,17 @@ export interface CatalogEntry {
   contextLevels?: number[]
   supportsFast?: boolean
   hasTextOutput?: boolean
+  usesThinkingBudget?: boolean
 }
+
+export type CatalogMatch = CatalogEntry | { contextLimit?: undefined, reasoning: true, reasoningLevels: ThinkingLevel[] }
 
 function normalized(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
 /** Exact identifiers/aliases only: never prefill another model because fuzzy search ranked it first. */
-export function matchCatalogModel(entries: CatalogEntry[], modelId: string, displayName = '', ownedBy = ''): CatalogEntry | undefined {
+export function matchCatalogModel(entries: CatalogEntry[], modelId: string, displayName = '', ownedBy = ''): CatalogMatch | undefined {
   const id = modelId.trim().toLowerCase()
   if (!id)
     return undefined
@@ -37,10 +40,14 @@ export function matchCatalogModel(entries: CatalogEntry[], modelId: string, disp
     origin = 'anthropic'
   else if (/^(?:google\/)?gemini-/.test(id))
     origin = 'google'
+  else if (/^(?:deepseek\/)?deepseek-/.test(id))
+    origin = 'deepseek'
   const ranked = entries.map((entry) => {
     const candidate = entry.id.toLowerCase()
     let score = 0
-    if (candidate === id || `${entry.providerKey}/${candidate}`.toLowerCase() === id)
+    if (candidate === id)
+      score = 110
+    else if (`${entry.providerKey}/${candidate}`.toLowerCase() === id)
       score = 100
     else if (entry.canonicalId?.toLowerCase() === id)
       score = 90
@@ -67,48 +74,66 @@ export function matchCatalogModel(entries: CatalogEntry[], modelId: string, disp
     entry.toolCall,
     entry.hasImages,
     entry.reasoningLevels,
+    entry.usesThinkingBudget,
     entry.contextLevels,
     entry.supportsFast,
   ])
-  const ambiguous = ranked.some(item => item.score === best.score && signature(item.entry) !== signature(best.entry))
-  return ambiguous ? undefined : best.entry
+  const tied = ranked.filter(item => item.score === best.score).map(item => item.entry)
+  if (tied.every(entry => signature(entry) === signature(best.entry)))
+    return best.entry
+
+  // Preserve only agreed reasoning capabilities when reseller limits disagree.
+  if (!tied.every(entry => entry.reasoning))
+    return undefined
+  const declared = tied.flatMap(entry => entry.reasoningLevels?.length ? [entry.reasoningLevels] : [])
+  const reasoningLevels = declared[0]?.filter(level => declared.every(levels => levels.includes(level))) ?? []
+  return reasoningLevels.length ? { reasoning: true, reasoningLevels } : undefined
 }
 
 /** Defaults for a deliberate model selection; provider address, auth and wire model id are never changed. */
-export function catalogModelDefaults(entry: CatalogEntry, baseUrl: string, apiModel: string): Partial<ProviderModel> {
-  const type = defaultProtocolForModel(baseUrl, entry.canonicalId?.split('/').at(-1) || entry.id || apiModel)
+export function catalogModelDefaults(entry: CatalogMatch, baseUrl: string, apiModel: string, current?: Pick<ProviderModel, 'type' | 'contextTokenLimit' | 'maxOutputTokens'>): Partial<ProviderModel> {
+  const full = entry.contextLimit === undefined ? undefined : entry
+  const inferredType = defaultProtocolForModel(baseUrl, full?.canonicalId?.split('/').at(-1) || full?.id || apiModel)
+  const type = current?.type ?? inferredType
+  const contextLimit = current?.contextTokenLimit ?? full?.contextLimit
+  const maxOutput = current?.maxOutputTokens ?? full?.outputLimit ?? 8192
+  const maxOutputTokens = contextLimit === undefined ? maxOutput : Math.min(maxOutput, contextLimit)
   const openai = type === 'openai-chat' || type === 'openai-responses'
   let levels: ThinkingLevel[] = []
   if (entry.reasoning) {
     if (entry.reasoningLevels?.length)
       levels = entry.reasoningLevels
-    else if (type === 'gemini' || openai)
+    else if (openai || (type === 'gemini' && !full?.usesThinkingBudget))
       levels = ['low', 'medium', 'high']
   }
   const thinkingLevel = levels.includes('medium') ? 'medium' : levels.includes('high') ? 'high' : levels[0]
-  const maxOutputTokens = Math.min(entry.outputLimit ?? 8192, entry.contextLimit)
-  const context = [...new Set([...(entry.contextLevels ?? []), entry.contextLimit])].filter(value => value > 0 && value <= entry.contextLimit).sort((a, b) => a - b)
   const thinkingBudgetTokens = entry.reasoning && !thinkingLevel && maxOutputTokens > 1024 ? Math.min(8192, maxOutputTokens - 1) : undefined
-  const thinking = entry.reasoning && !!(thinkingLevel || thinkingBudgetTokens)
+  const thinking = !!(thinkingLevel || thinkingBudgetTokens)
+  const parameters: ProviderModel['parameters'] = {
+    ...(thinking && openai && levels.length ? { reasoning: levels } : {}),
+    ...(thinking && !openai ? { thinking: true, ...(levels.length ? { effort: levels } : {}) } : {}),
+  }
+  const thinkingDefaults = { thinking, thinkingLevel, thinkingBudgetTokens, parameters }
+  if (!full || contextLimit === undefined)
+    return thinkingDefaults
+
+  const context = [...new Set([...(full.contextLevels ?? []), contextLimit])].filter(value => value > 0 && value <= contextLimit).sort((a, b) => a - b)
   return {
     type,
     noMaxTokens: false,
-    displayName: entry.name,
-    contextTokenLimit: entry.contextLimit,
+    displayName: full.name,
+    contextTokenLimit: contextLimit,
     maxOutputTokens,
-    supportsAgent: entry.toolCall,
-    supportsImages: entry.hasImages,
-    supportsCmdK: entry.hasTextOutput !== false,
-    thinking,
-    ...(thinkingLevel && thinking ? { thinkingLevel } : {}),
-    ...(thinkingBudgetTokens ? { thinkingBudgetTokens } : {}),
+    supportsAgent: full.toolCall,
+    supportsImages: full.hasImages,
+    supportsCmdK: full.hasTextOutput !== false,
     fastMode: false,
-    tooltipMarkdown: entry.description ?? '',
+    tooltipMarkdown: full.description ?? '',
+    ...thinkingDefaults,
     parameters: {
+      ...parameters,
       context,
-      ...(thinking && openai && levels.length ? { reasoning: levels } : {}),
-      ...(thinking && !openai ? { thinking: true, ...(levels.length ? { effort: levels } : {}) } : {}),
-      ...(entry.supportsFast ? { fast: true } : {}),
+      ...(full.supportsFast ? { fast: true } : {}),
     },
   }
 }

@@ -1,53 +1,66 @@
-import { ProviderAccordion } from './provider-accordion'
+import { ProviderEditor } from './provider-accordion'
+import { WebToolsButton } from './search-section'
 
-/** 模型目录摘要与服务商列表。 */
 export function Providers() {
   return (
     <div>
-      <section class="catalog-card" aria-label="模型目录">
-        <div class="catalog-toolbar">
-          <div class="catalog-info">
-            <div class="catalog-heading">
-              <span class="catalog-title">模型目录</span>
-              <span class="catalog-source">models.dev</span>
-              <span class="catalog-badge" x-text="$store.app.catalogSourceLabel"></span>
+      <div x-show="!$store.app.editingProviderId">
+        <header class="config-header">
+          <h2>
+            AI 服务
+            <span class="service-count" x-text="$store.app.providers.length"></span>
+          </h2>
+          <div class="config-actions">
+            <WebToolsButton />
+            <button type="button" class="settings-primary" x-on:click="$store.app.addProvider()">+ 添加服务</button>
+          </div>
+        </header>
+        <div class="service-list" role="list" aria-label="AI 服务">
+          <template x-for="(p, index) in $store.app.providers" x-bind:key="p.id">
+            <div class="service-row" role="listitem" x-bind:class="{ 'service-disabled': $store.app.baseProvider(p.id)?.enabled === false }">
+              <button class="service-open ghost" type="button" x-bind:aria-label="'编辑 ' + (p.name || '未命名服务商')" x-on:click="$store.app.openProvider(p.id)">
+                <span class="service-icon" aria-hidden="true" x-text="(p.name || '+').slice(0, 1).toUpperCase()"></span>
+                <span class="service-identity">
+                  <span class="service-name">
+                    <strong x-text="p.name || '未命名服务商'"></strong>
+                    <span class="catalog-badge" x-show="$store.app.baseProvider(p.id)?.enabled === false" x-cloak>已停用</span>
+                    <span class="catalog-badge" x-show="$store.app.isDirty(p.id)" x-cloak>未保存</span>
+                  </span>
+                  <span class="service-meta" x-text="$store.app.providerHost(p.baseUrl) + ' · ' + (p.models?.length || 0) + ' 个模型'"></span>
+                </span>
+              </button>
+              <button
+                type="button"
+                class="service-switch"
+                role="switch"
+                x-show="$store.app.baseProvider(p.id)"
+                x-bind:aria-label="'启用 ' + p.name"
+                x-bind:aria-checked="$store.app.baseProvider(p.id)?.enabled !== false"
+                x-bind:disabled="!!$store.app.savingProviders[p.id]"
+                x-on:click="$store.app.setProviderEnabled(p.id, $store.app.baseProvider(p.id)?.enabled === false)"
+              >
+              </button>
+              <div class="service-sort" x-show="$store.app.baseProvider(p.id) && $store.app.state.providers.length > 1" x-cloak>
+                <button type="button" class="sort-btn" aria-label="上移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, -1)" x-show="index > 0">▲</button>
+                <button type="button" class="sort-btn" aria-label="下移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, 1)" x-show="index < $store.app.state.providers.length - 1">▼</button>
+              </div>
             </div>
-            <div class="catalog-counts" role="status" aria-live="polite" x-text="$store.app.catalogSummary"></div>
+          </template>
+          <p class="empty" x-show="!$store.app.providers.length">添加服务地址和密钥后，可从服务商获取模型。</p>
+        </div>
+        <section class="catalog-status" aria-label="模型目录">
+          <div class="catalog-toolbar">
+            <span class="catalog-info" role="status" aria-live="polite" x-text="[$store.app.catalogSourceLabel, $store.app.catalogSummary, $store.app.catalogUpdatedAt].join(' · ')"></span>
+            <button class="ghost catalog-refresh" type="button" x-bind:disabled="$store.app.catalogBusy" x-on:click="$store.app.refreshCatalog()">
+              <span class="catalog-refresh-icon" x-bind:class="{ 'is-spinning': $store.app.catalogBusy }" aria-hidden="true">↻</span>
+              <span x-text="$store.app.catalogBusy ? '更新中…' : '更新模型目录'"></span>
+            </button>
           </div>
-          <button
-            class="secondary catalog-refresh"
-            type="button"
-            x-bind:disabled="$store.app.catalogBusy"
-            x-bind:aria-busy="$store.app.catalogBusy"
-            x-on:click="$store.app.refreshCatalog()"
-            title="从 models.dev 更新模型参数，不修改已保存的服务商配置"
-          >
-            <span class="catalog-refresh-icon" x-bind:class="{ 'is-spinning': $store.app.catalogBusy }" aria-hidden="true">↻</span>
-            <span x-text="$store.app.catalogBusy ? '更新中…' : '更新目录'">更新目录</span>
-          </button>
-        </div>
-        <div class="catalog-meta">
-          <span>上次更新</span>
-          <span x-text="$store.app.catalogUpdatedAt"></span>
-        </div>
-        <p class="catalog-note">打开面板会自动检查过期目录。用「获取模型」查看供应商当前提供的模型。</p>
-        <div class="catalog-error" role="alert" x-show="$store.app.catalogStatus?.lastError" x-cloak>
-          <strong x-text="$store.app.catalogStatus?.source === 'empty' ? '模型目录暂不可用，请尝试更新。' : '目录更新失败，已保留原有数据。'"></strong>
-          <span x-text="$store.app.catalogStatus?.lastError"></span>
-        </div>
-      </section>
-      <template x-if="$store.app.providers.length === 0">
-        <div class="gate">
-          <div class="gate-title">添加第一个服务商</div>
-          <div class="gate-text">填入中转站或官方服务的地址和密钥，再获取可用模型。选择模型即可自动填入参数。</div>
-          <div class="gate-actions">
-            <button x-on:click="$store.app.addProvider()">+ 添加服务商</button>
-            <button class="secondary" x-on:click="$store.app.post('editProvidersJson')">编辑配置文件</button>
-          </div>
-        </div>
-      </template>
-      <template x-for="(p, pIdx) in $store.app.providers" x-bind:key="p.id">
-        <ProviderAccordion />
+          <div class="catalog-error" role="alert" x-show="$store.app.catalogStatus?.lastError" x-text="$store.app.catalogStatus?.lastError" x-cloak></div>
+        </section>
+      </div>
+      <template x-for="p in $store.app.providers.filter(provider => provider.id === $store.app.editingProviderId)" x-bind:key="p.id">
+        <ProviderEditor />
       </template>
     </div>
   )

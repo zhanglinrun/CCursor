@@ -5,12 +5,10 @@ import type { SemanticTurn } from './semanticConversation'
 import type { ProviderStateStrategy } from './stateStrategy'
 import type { ProviderToolCatalog } from './toolCatalog'
 import type { LLMContentBlock, LLMMessage, LLMProvider, LLMStreamRequest, LLMTool, LLMToolResultBlock } from './types'
-import { buildProviderBaseUrl } from '../../../shared/providerProtocol'
 import { ErrorDetails_Error } from '../../gen/aiserver_v1_shared_pb'
 import { filterToolsForMode } from '../agent/toolkit/types'
 import { makeByokConnectError } from '../errors'
 import { resolveModel } from '../models/mapper'
-import { AnthropicProvider } from './anthropic'
 import {
   anthropicConversationCodec,
   geminiConversationCodec,
@@ -18,10 +16,8 @@ import {
   openAIResponsesConversationCodec,
 
 } from './conversationCodec'
-import { GeminiProvider } from './gemini'
-import { OpenAIChatProvider } from './openai-chat'
-import { OpenAIResponsesProvider } from './openai-responses'
 import { resolvePromptProfile } from './promptProfile'
+import { createProviderClient, resolveCustomRequestUrl } from './providerClient'
 import { anthropicStateStrategy, geminiStateStrategy, openAIStateStrategy } from './stateStrategy'
 import { llmMessageToStoredMessage } from './storedTranscript'
 
@@ -80,36 +76,15 @@ export interface ProviderRuntime {
   transitionRound: (messages: LLMMessage[], assistantContent: LLMContentBlock[], pendingToolResults?: LLMToolResultBlock[]) => ProviderRoundTransition
 }
 
-/**
- * Provider SDK 实例缓存 — key 为 `${entry.id}\u0000${协议}`。
- *
- * 缓存键必须带上协议：同一个中转站的不同模型可以走不同协议（deepseek 走
- * Anthropic、gpt 走 OpenAI），而它们共享同一个 entry.id。只按 id 缓存会让
- * 后建的模型复用先建实例的协议 —— 表现为"测试通过、实际调用却打错路径"。
- */
+// A relay can serve multiple codecs and multiple endpoints for the same codec.
 const providerInstances = new Map<string, LLMProvider>()
 
-function instantiateProvider(entry: ProviderEntry): LLMProvider {
-  switch (entry.type) {
-    case 'anthropic': return new AnthropicProvider(entry)
-    case 'openai-chat': return new OpenAIChatProvider(entry)
-    case 'openai-responses': return new OpenAIResponsesProvider(entry)
-    case 'gemini': return new GeminiProvider(entry)
-  }
-}
-
-function getProviderForEntry(entry: ProviderEntry, effectiveType: ProviderType): LLMProvider {
-  const cacheKey = `${entry.id}\u0000${effectiveType}`
+function getProviderForEntry(entry: ProviderEntry, effectiveType: ProviderType, customRequestPath?: string): LLMProvider {
+  const requestUrl = resolveCustomRequestUrl(effectiveType, entry.baseUrl, customRequestPath)
+  const cacheKey = JSON.stringify([entry.id, effectiveType, requestUrl])
   let inst = providerInstances.get(cacheKey)
   if (!inst) {
-    inst = instantiateProvider({
-      ...entry,
-      type: effectiveType,
-      // 地址是**前缀**，版本段由协议决定 —— 两个 SDK 对 /v1 的要求正好相反
-      // （Anthropic 不该带、OpenAI 必须带），共享的地址不可能同时喂对两家，
-      // 所以这里按生效协议换算一次。见 shared/providerProtocol.ts。
-      baseUrl: buildProviderBaseUrl(effectiveType, entry.baseUrl),
-    })
+    inst = createProviderClient(entry, effectiveType, requestUrl)
     providerInstances.set(cacheKey, inst)
   }
   return inst
@@ -170,7 +145,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
     return mode ? filterToolsForMode(all, mode, isSubagent) : all
   }
   return {
-    provider: getProviderForEntry(providerEntry, resolved.provider),
+    provider: getProviderForEntry(providerEntry, resolved.provider, resolved.customRequestPath),
     providerName: providerEntry.name,
     providerId: providerEntry.id,
     providerType: resolved.provider,

@@ -114,7 +114,7 @@ it('refreshes stale metadata on use, coalesces requests, and backs off after a f
   expect(catalogStore.match('unique-old-model')).toBeDefined()
   now += 5 * 60_000
   expect((await catalogStore.refreshIfStale())?.source).toBe('remote')
-  expect(catalogStore.match('gpt-6.2-sol')?.id).toBe('gpt-6.2-sol')
+  expect(catalogStore.match('gpt-6.2-sol')).toMatchObject({ id: 'gpt-6.2-sol' })
   expect(fetchImpl).toHaveBeenCalledTimes(2)
 })
 

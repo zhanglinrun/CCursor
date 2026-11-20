@@ -22,26 +22,21 @@ import { logger } from '../logger'
 type Sqlite3Module = any
 
 let sqlite3Module: Sqlite3Module | null = null
+let cursorAppRoot: string | undefined
 
-/**
- * 候选 Cursor resources/app 目录
- *
- * 策略 (按优先级):
- *   1. 测试用 env override: CURSOR_APP_ROOT
- *   2. 相对定位: 从扩展自身的 __dirname 往上 3 层
- *      我们装在 <cursorRoot>/resources/app/extensions/cursor2plus/dist/extension.js
- *      __dirname = .../extensions/cursor2plus/dist
- *      ../../.. = .../app  ← target
- *      这一条天然跨平台 (mac/linux/win 无关),优先级最高的自动路径
- *   3. 平台硬编码 fallback: 当 1/2 都失败时的防御性兜底
- *      包括 Windows 的常见安装路径 (per-user / system-wide / scoop)
- */
+export function setCursorAppRoot(root: string): void {
+  cursorAppRoot = root
+}
+
+/** Resolve Cursor's Electron-native SQLite module for both bundled and user VSIX installs. */
 function getCursorAppCandidates(): string[] {
   const candidates: string[] = []
 
   const envPath = process.env.CURSOR_APP_ROOT
   if (envPath && existsSync(join(envPath, 'package.json')))
     candidates.push(envPath)
+  if (cursorAppRoot)
+    candidates.push(cursorAppRoot)
 
   // 相对扩展自身位置反推 —— 真正的跨平台方案
   try {

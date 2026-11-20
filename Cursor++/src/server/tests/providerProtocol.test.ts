@@ -4,9 +4,11 @@ import {
   buildProviderBaseUrl,
   buildRequestUrlPreview,
   checkBaseUrlShape,
+  customRequestUrl,
   defaultProtocolForModel,
   describeProviderType,
   familyOf,
+  isCustomRequestType,
   PROTOCOL_FAMILY_OPTIONS,
   protocolSelectionOf,
   providerTypeOf,
@@ -100,6 +102,52 @@ describe('buildProviderBaseUrl — 地址是前缀，版本段归协议', () => 
     expect(buildProviderBaseUrl('anthropic', '')).toBe('https://api.anthropic.com')
     expect(buildProviderBaseUrl('openai-chat', '')).toBe('https://api.openai.com/v1')
     expect(buildProviderBaseUrl('gemini', '')).toBe('https://generativelanguage.googleapis.com')
+  })
+})
+
+describe('custom request URL', () => {
+  it('supports the three SDK codecs with a fetch hook', () => {
+    expect(ALL_PROVIDER_TYPES.filter(isCustomRequestType)).toEqual(['anthropic', 'openai-chat', 'openai-responses'])
+  })
+
+  it('uses the origin and preserves the path and query exactly', () => {
+    expect(customRequestUrl('https://relay.example.com:8443/prefix/v1', '/api/%7Echat?name=a%20b&mode=1'))
+      .toBe('https://relay.example.com:8443/api/%7Echat?name=a%20b&mode=1')
+    expect(customRequestUrl('http://[::1]:8317/prefix', '/')).toBe('http://[::1]:8317/')
+  })
+
+  it.each([
+    undefined,
+    '',
+    'relay.example.com',
+    'https:relay.example.com',
+    'https:///relay.example.com',
+    'ftp://relay.example.com',
+    'https://user:pass@relay.example.com',
+    'https://@relay.example.com',
+    'https://relay.example.com/#',
+    'https://relay.example.com/has space',
+    'https://relay.example.com\\prefix',
+  ])('rejects invalid provider base %s', (baseUrl) => {
+    expect(customRequestUrl(baseUrl, '/custom')).toBeUndefined()
+  })
+
+  it.each([
+    undefined,
+    null,
+    42,
+    '',
+    'relative/api',
+    '//other.example.com/path',
+    'https://relay.example.com/path',
+    '/custom#',
+    '/custom?q=a b',
+    '/custom\t',
+    '/\\other.example.com/path',
+    '/a/../custom',
+    '/custom?q=%zz',
+  ])('rejects an invalid or noncanonical path %s', (path) => {
+    expect(customRequestUrl('https://relay.example.com', path)).toBeUndefined()
   })
 })
 

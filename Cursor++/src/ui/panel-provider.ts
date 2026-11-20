@@ -23,7 +23,7 @@ import { detectModelProtocol, runModelTest } from '../server/handlers/llm/modelT
 import { resetProviderInstanceCache } from '../server/handlers/llm/providerRuntime'
 import { logger } from '../server/logger'
 import { buildUsageSummary, renameProviderInUsageFile } from '../server/stats/usageStore'
-import { buildProviderBaseUrl, materializeModelProtocols } from '../shared/providerProtocol'
+import { buildProviderBaseUrl, materializeModelProtocols, suggestProtocol } from '../shared/providerProtocol'
 import { normalizeRemoteModels } from '../shared/remoteModels'
 import { checkForUpdatesManually } from '../update-check'
 import { renderHtml } from './components/layout'
@@ -95,7 +95,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     // 字体静默回退到系统字体 —— 而 .codicon 用的是私有区码位，系统字体里没有，
     // 于是图标全变成"缺字方块"（密码框旁的眼睛按钮就是这样消失的）。
     // 注意 localResourceRoots 一旦显式给出就会**替换**默认值，所以扩展目录要一并列上。
-    const mediaDir = join(this.context.extensionPath, '..', '..', 'out', 'media')
+    const appRoot = vscode.env.appRoot || join(this.context.extensionPath, '..', '..')
+    const mediaDir = join(appRoot, 'out', 'media')
     const codiconPath = join(mediaDir, 'codicon.ttf')
     const hasCodiconFont = existsSync(codiconPath)
 
@@ -148,6 +149,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break
         case 'setByokMode':
           await vscode.commands.executeCommand('cursor2plus.setByokMode', msg.mode === 1 ? 1 : 0, 'panel')
+          break
+        case 'injectRouting':
+          await vscode.commands.executeCommand('cursor2plus.injectRouting')
           break
         case 'toggleServer':
           await vscode.commands.executeCommand('cursor2plus.serverToggle')
@@ -204,24 +208,24 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
         case 'fetchRemoteModels': {
           const pid = msg.pid as string
+          const requestId = String(msg.requestId ?? '')
           const providers = getState().providers || []
           const draft = msg.draft as any
           const p = draft || providers.find((x: any) => x.id === pid)
           if (!p?.auth?.value) {
-            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'No API key set yet' })
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, requestId, error: '请先填写 API 密钥或 Token' })
             break
           }
           const baseUrl = (p.baseUrl || '').trim()
           if (!baseUrl) {
-            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'No Base URL set yet' })
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, requestId, error: '请先填写服务地址' })
             break
           }
           void refreshStaleCatalog()
-          // 「列出模型」得挑一种协议去问。中转站下可以混挂多家，这里取第一个
-          // 填了 API Model 的模型所生效的协议 —— 它至少对应一个真实存在的模型，
-          // 比拿遗留的 provider.type 去猜更靠谱。都没有时回落到 provider.type。
+          // 手选接口优先；自动模式优先使用服务地址能明确识别的协议。
           const probeModel = (p.models || []).find((m: any) => m?.apiModel?.trim())
-          const type = probeModel ? effectiveProviderType(p, probeModel) : p.type
+          const inferred = suggestProtocol(baseUrl)?.type ?? (probeModel ? effectiveProviderType(p, probeModel) : p.type)
+          const type = isProviderType(msg.protocol) ? msg.protocol : inferred
           // 地址是前缀，版本段由协议补全 —— 见 shared/providerProtocol.ts
           const base = buildProviderBaseUrl(type, baseUrl)
           const url = type === 'anthropic'
@@ -252,16 +256,16 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             const resp = await fetch(url, { headers, cache: 'no-cache', signal: AbortSignal.timeout(10_000) })
             if (!resp.ok) {
               const body = await resp.text().catch(() => '')
-              this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `${resp.status} ${resp.statusText}: ${body.slice(0, 200)}` })
+              this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, requestId, error: `${resp.status} ${resp.statusText}: ${body.slice(0, 200)}` })
               break
             }
             const json = await resp.json() as any
             const models = normalizeRemoteModels(json).map(model => ({ ...model, catalog: resolveCatalogModel(model.id, model.displayName, model.ownedBy) }))
-            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models })
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, requestId, models })
           }
           catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
-            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: errMsg })
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, requestId, error: errMsg })
           }
           break
         }
@@ -273,10 +277,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             })
             await refreshState()
             this.postState()
+            this.view?.webview.postMessage({ type: 'toast', text: '联网工具设置已保存', level: 'info' })
           }
           catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
-            this.view?.webview.postMessage({ type: 'toast', text: `Failed to save web tools config: ${errMsg}`, level: 'error', duration: 6000 })
+            this.view?.webview.postMessage({ type: 'toast', text: `联网工具设置保存失败：${errMsg}`, level: 'error', duration: 6000 })
           }
           break
         }
@@ -421,7 +426,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'loadUsageStats': {
           const requestId = String(msg.requestId ?? '')
           try {
-            const summary = await buildUsageSummary()
+            const summary = await buildUsageSummary({ windowDays: msg.windowDays === 7 ? 7 : 14 })
             this.view?.webview.postMessage({ type: 'usageStats', requestId, summary })
           }
           catch (err) {
@@ -430,17 +435,41 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           }
           break
         }
+        case 'setProviderEnabled':
         case 'saveProviders': {
+          const toggle = msg.type === 'setProviderEnabled'
           const next = msg.providers as ProviderEntry[]
           const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined
-          const targetIds = Array.isArray(msg.targetIds) ? msg.targetIds : undefined
-          // 改名要同步到历史用量记录，而写入之后就取不到旧名字了，所以先抓一份
+          const targetIds: string[] | undefined = toggle ? [String(msg.pid)] : Array.isArray(msg.targetIds) ? msg.targetIds : undefined
           const previousProviders = loadProviders().providers
           try {
-            await updateProviders((draft) => {
-              draft.providers = next
+            const saved = await updateProviders((draft) => {
+              if (toggle) {
+                const provider = draft.providers.find(entry => entry.id === msg.pid)
+                if (!provider || typeof msg.enabled !== 'boolean')
+                  throw new Error('服务不存在或启用状态无效')
+                if (msg.enabled)
+                  delete provider.enabled
+                else
+                  provider.enabled = false
+              }
+              else if (targetIds?.length) {
+                for (const id of targetIds) {
+                  const entry = next.find(provider => provider.id === id)
+                  if (!entry)
+                    throw new Error('待保存的服务不存在')
+                  const index = draft.providers.findIndex(provider => provider.id === id)
+                  if (index < 0)
+                    draft.providers.push(entry)
+                  else
+                    draft.providers[index] = { ...entry, enabled: draft.providers[index].enabled }
+                }
+              }
+              else {
+                draft.providers = next
+              }
             })
-            syncUsageProviderNames(previousProviders, next)
+            syncUsageProviderNames(previousProviders, saved.providers)
             resetProviderInstanceCache()
             bumpRefreshSignal()
             const state = await refreshState()

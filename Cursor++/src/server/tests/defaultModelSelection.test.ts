@@ -3,6 +3,7 @@ import { expect, it } from 'vitest'
 import { setProvidersForTests } from '../config/providersStore'
 import { isModelDefaultOn } from '../data/defaults'
 import { buildByokAvailableModels } from '../handlers/models/byokModelBuilder'
+import { ModelNotFoundError, resolveModel } from '../handlers/models/mapper'
 import { handleGetDefaultModel } from '../services/core/AiService'
 
 /**
@@ -81,4 +82,20 @@ it('never pushes a model that AvailableModels reports as off', async () => {
 
   expect(offInPicker).toEqual(['no-flag', 'explicitly-off'])
   expect(offInPicker).not.toContain(pushed)
+})
+
+it('omits disabled providers from model selection, defaults, and request lookup', async () => {
+  const base = { type: 'anthropic', baseUrl: '', auth: { kind: 'apiKey', value: 'test-key' } } as const
+  setProvidersForTests({
+    $schemaVersion: 1,
+    providers: [
+      { ...base, id: 'off', name: 'Off', enabled: false, models: [model('disabled', { defaultOn: true, thinking: true })] },
+      { ...base, id: 'legacy', name: 'Legacy', models: [model('active', { defaultOn: true, thinking: true })] },
+    ],
+  })
+
+  expect(buildByokAvailableModels().map(item => item.name)).toEqual(['active'])
+  expect(await handleGetDefaultModel()).toMatchObject({ model: 'active', thinkingModel: 'active' })
+  expect(resolveModel('auto').apiModel).toBe('active')
+  expect(() => resolveModel('disabled')).toThrow(ModelNotFoundError)
 })

@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import * as vscode from 'vscode'
 import { compareVersions, EXTENSION_VERSION } from './version'
 
@@ -183,6 +183,11 @@ async function installRelease(assetUrl: string, context: vscode.ExtensionContext
   try {
     await mkdir(extractDir, { recursive: true })
     await downloadFile(assetUrl, vsixPath)
+    const bundled = relative(join(vscode.env.appRoot || dirname(dirname(extensionDir)), 'extensions'), extensionDir) === 'cursor2plus'
+    if (!bundled) {
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(vsixPath))
+      return
+    }
 
     await extractVsix(vsixPath, extractDir)
 
@@ -264,10 +269,10 @@ async function performUpdate(latest: LatestRelease, context: vscode.ExtensionCon
     return
   if (!latest.assetUrl) {
     void vscode.window.showWarningMessage(
-      `Cursor++ BYOK ${latest.version} has no downloadable .vsix asset. Open the release page instead.`,
-      'Open Release Page',
+      `Cursor++ ${latest.version} 的发行版没有可下载的 .vsix 资源，请打开发行页手动下载。`,
+      '打开发行页',
     ).then((choice) => {
-      if (choice === 'Open Release Page')
+      if (choice === '打开发行页')
         void vscode.env.openExternal(vscode.Uri.parse(RELEASES_PAGE_URL))
     })
     return
@@ -276,24 +281,24 @@ async function performUpdate(latest: LatestRelease, context: vscode.ExtensionCon
   updating = true
   try {
     const outcome = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Updating Cursor++ BYOK to ${latest.version}…` },
+      { location: vscode.ProgressLocation.Notification, title: `正在更新 Cursor++ 至 ${latest.version}…` },
       async () => installLatest(latest, context, log),
     )
     if (outcome.ok) {
       const action = await vscode.window.showInformationMessage(
-        `Cursor++ BYOK ${latest.version} installed. Restart Cursor to apply it.`,
-        'Restart Cursor',
+        `Cursor++ ${latest.version} 已安装，重启 Cursor 后生效。`,
+        '重启 Cursor',
       )
-      if (action === 'Restart Cursor')
+      if (action === '重启 Cursor')
         await vscode.commands.executeCommand('workbench.action.reloadWindow')
       return
     }
 
     const action = await vscode.window.showErrorMessage(
-      `Failed to update Cursor++ BYOK: ${outcome.error}`,
-      'Open Release Page',
+      `更新 Cursor++ 失败：${outcome.error}`,
+      '打开发行页',
     )
-    if (action === 'Open Release Page')
+    if (action === '打开发行页')
       void vscode.env.openExternal(vscode.Uri.parse(RELEASES_PAGE_URL))
   }
   finally {
@@ -316,7 +321,7 @@ export async function checkForUpdatesManually(
   const current = getCurrentVersion()
 
   if (updating) {
-    return { status: 'failed', message: 'An update is already in progress.' }
+    return { status: 'failed', message: '已有更新正在进行，请稍候。' }
   }
 
   onProgress?.('checking')
@@ -325,13 +330,13 @@ export async function checkForUpdatesManually(
     log?.('[UPDATE] manual check failed: could not read the latest release')
     return {
       status: 'failed',
-      message: 'Could not reach GitHub to check for updates. Check your network and try again.',
+      message: '无法访问 GitHub 检查更新，请检查网络后重试。',
     }
   }
 
   if (compareVersions(latest.version, current) <= 0) {
     log?.(`[UPDATE] manual check: up to date (current=${current}, latest=${latest.version})`)
-    return { status: 'up-to-date', message: `You are on the latest version (${current}).` }
+    return { status: 'up-to-date', message: `已是最新版本（${current}）。` }
   }
 
   updating = true
@@ -344,7 +349,7 @@ export async function checkForUpdatesManually(
     }
     return {
       status: 'updated',
-      message: `${latest.version} installed. Restart Cursor to apply it.`,
+      message: `${latest.version} 已安装，重启 Cursor 后生效。`,
     }
   }
   finally {
@@ -372,19 +377,19 @@ async function checkOnce(state: vscode.Memento, context: vscode.ExtensionContext
   log?.(`[UPDATE] new version available: ${latest.version} (current=${current})`)
 
   const action = await vscode.window.showInformationMessage(
-    `Cursor++ BYOK ${latest.version} is available (current: ${current}).`,
-    'Update Now',
-    'Release Notes',
-    'Later',
+    `Cursor++ ${latest.version} 可用（当前 ${current}）。`,
+    '现在更新',
+    '发行说明',
+    '稍后',
   )
 
-  if (action === 'Update Now') {
+  if (action === '现在更新') {
     await performUpdate(latest, context, log)
   }
-  else if (action === 'Release Notes') {
+  else if (action === '发行说明') {
     void vscode.env.openExternal(vscode.Uri.parse(`https://github.com/${RELEASE_REPO}/releases/tag/${latest.version}`))
   }
-  else if (action === 'Later') {
+  else if (action === '稍后') {
     state.update(STATE_KEY_DISMISSED, normalizeVersion(latest.version))
   }
 }

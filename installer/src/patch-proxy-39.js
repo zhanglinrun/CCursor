@@ -214,31 +214,20 @@ function insertPatches(source, fnName, createRequireName, nativeSync) {
 
 // ── Public API ──
 
-export function patchProxy39(paths, log) {
-  if (!is39OrNewer(paths.cursorVersion)) {
-    log?.('[proxy-39] Cursor < 3.9, skipping');
-    return false;
-  }
-
-  const target = getProxy39Target(paths);
-  if (!existsSync(target)) {
-    log?.('[proxy-39] alwaysLocalSingletonMain.js not found, skipping');
-    return false;
-  }
-
-  let code = readFileSync(target, 'utf-8');
-  if (isProxy39Patched(paths)) {
+export function prepareProxy39Patch(original, version, log) {
+  let code = original;
+  const nativeSync = is1125OrNewer(version);
+  if (hasRouterPatch(code) && (hasSyncPatch(code) || nativeSync)) {
     log?.('[proxy-39] Singleton BYOK router/proxy sync already applied');
-    return false;
+    return original;
   }
 
   // Only force this on the 3.9+ inline HTTP/1.1 transport shape.
   if (!/from\s*["']https["']/.test(code) || !/from\s*["']http["']/.test(code) || !code.includes('proxy-agent patches installed')) {
     log?.('[proxy-39] 3.9 inline HTTP/1.1 transport signature not found, skipping');
-    return false;
+    return null;
   }
 
-  const nativeSync = is1125OrNewer(paths.cursorVersion);
 
   if (nativeSync) {
     // 3.11.25+: only need the BYOK router, sync is native
@@ -261,6 +250,24 @@ export function patchProxy39(paths, log) {
     throw new Error('proxy-39 patch insertion failed verification (sync)');
   }
 
+  return code;
+}
+
+export function patchProxy39(paths, log) {
+  if (!is39OrNewer(paths.cursorVersion)) {
+    log?.('[proxy-39] Cursor < 3.9, skipping');
+    return false;
+  }
+
+  const target = getProxy39Target(paths);
+  if (!existsSync(target)) {
+    log?.('[proxy-39] alwaysLocalSingletonMain.js not found, skipping');
+    return false;
+  }
+
+  const original = readFileSync(target, 'utf-8');
+  const code = prepareProxy39Patch(original, paths.cursorVersion, log);
+  if (code === null || code === original) return false;
   createBackup(target, TAG, log);
   writeFileSync(target, code);
   updateChecksums(paths, [target], TAG, log);

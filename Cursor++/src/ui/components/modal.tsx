@@ -10,7 +10,7 @@ export function Modal({ showExpr, title, children }: { showExpr: string, title: 
       <div class="modal-dialog">
         <div class="modal-header">
           <span class="modal-title">{title}</span>
-          <button class="modal-close" x-on:click={`${showExpr} = false`}>&times;</button>
+          <button type="button" class="modal-close" aria-label="关闭" x-on:click={`${showExpr} = false`}>&times;</button>
         </div>
         <div class="modal-body">
           {children}

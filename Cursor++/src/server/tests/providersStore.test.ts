@@ -147,4 +147,43 @@ describe('providersStore — provider.type 配置边界校验', () => {
       models: [],
     })
   })
+
+  it('preserves disabled configuration and indexes only active models', async () => {
+    const store = await loadStore()
+    const disabled = {
+      ...providerFixture('disabled', 'anthropic'),
+      enabled: false,
+      baseUrl: 'https://relay.invalid/prefix',
+      headers: { 'x-relay': 'test' },
+      models: [
+        { id: 'shared', apiModel: 'disabled-api', displayName: 'Disabled', thinking: false, customRequestPath: '/custom' },
+        { id: 'disabled-only', apiModel: 'disabled-only', displayName: 'Disabled', thinking: false, customRequestPath: null },
+      ],
+    }
+    const legacy = providerFixture('legacy', 'openai-chat')
+    writeProvidersFile({
+      providers: [
+        disabled,
+        { ...legacy, models: [...legacy.models, { ...legacy.models[0], id: 'shared' }] },
+        { ...providerFixture('enabled', 'gemini'), enabled: true },
+        { ...providerFixture('malformed', 'anthropic'), enabled: 'false' },
+      ],
+    })
+
+    const { providers } = store.loadProviders()
+    expect(providers.map(provider => provider.enabled)).toEqual([false, undefined, true, undefined])
+    expect(store.getProvider('disabled')).toEqual(disabled)
+    expect(store.lookupModel('disabled-only')).toBeNull()
+    expect(store.lookupModel('shared')?.provider.id).toBe('legacy')
+    expect(store.flattenModels().map(({ model }) => model.id))
+      .toEqual(['legacy-model', 'shared', 'enabled-model', 'malformed-model'])
+
+    await store.updateProviders((draft) => {
+      draft.providers[0].enabled = true
+    })
+    store.resetProvidersCacheForTests()
+    expect(store.getProvider('disabled')).toEqual({ ...disabled, enabled: true })
+    expect(store.lookupModel('shared')?.provider.id).toBe('disabled')
+    expect(store.lookupModel('disabled-only')?.provider.id).toBe('disabled')
+  })
 })

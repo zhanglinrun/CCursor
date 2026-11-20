@@ -105,7 +105,7 @@ function buildAgentHostRouter() {
   });
 }
 
-function prepareAgentHostPatch(paths, log) {
+export function prepareAgentHostPatch(paths, log) {
   if (!hasValidPackage(paths)) throw new Error('cursor-agent-host package fingerprint mismatch');
 
   const originalEntry = readFileSync(paths.agentHostMain, 'utf-8');

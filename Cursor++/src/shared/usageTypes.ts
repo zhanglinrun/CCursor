@@ -220,7 +220,6 @@ export function aggregateUsage(
 ): UsageSummary {
   const windowDays = options.windowDays ?? USAGE_SUMMARY_WINDOW_DAYS
   const now = options.now ?? Date.now()
-  const windowStart = now - windowDays * 24 * 60 * 60 * 1000
   // 今日用 dayKey 而不是"最近 24 小时"：面板上的「今日」要和趋势图那天
   // 对得上，否则同一批数据在两处会显示成不同的量。
   const todayKey = dayKey(now)
@@ -230,6 +229,13 @@ export function aggregateUsage(
   const allTimeTotals = emptyUsageTotals()
   const dayBuckets = new Map<string, UsageTotals>()
   const modelBuckets = new Map<string, UsageTotals & { provider: string, model: string }>()
+  const date = new Date(now)
+  date.setHours(12, 0, 0, 0)
+  date.setDate(date.getDate() - windowDays + 1)
+  for (let offset = 0; offset < windowDays; offset++) {
+    dayBuckets.set(dayKey(date.getTime()), emptyUsageTotals())
+    date.setDate(date.getDate() + 1)
+  }
 
   for (const record of records) {
     accumulate(allTimeTotals, record)
@@ -238,15 +244,12 @@ export function aggregateUsage(
     if (recordDayKey === todayKey)
       accumulate(todayTotals, record)
 
-    // 窗口外要跳过但**不能提前 continue** —— allTime 已经累加过了
-    if (record.ts < windowStart)
+    const day = dayBuckets.get(recordDayKey)
+    if (!day)
       continue
 
     accumulate(windowTotals, record)
-
-    const day = dayBuckets.get(recordDayKey) ?? emptyUsageTotals()
     accumulate(day, record)
-    dayBuckets.set(recordDayKey, day)
 
     // provider 与 model 一起做键：不同家的同名模型（比如都在转发 gpt-5）要分开看，
     // 否则命中率会被两家不同的缓存策略平均掉，反而看不出问题
@@ -256,12 +259,7 @@ export function aggregateUsage(
     modelBuckets.set(modelBucketKey, row)
   }
 
-  const byDay: UsageDay[] = []
-  for (let offset = windowDays - 1; offset >= 0; offset--) {
-    const bucketKey = dayKey(now - offset * 24 * 60 * 60 * 1000)
-    const bucket = dayBuckets.get(bucketKey) ?? emptyUsageTotals()
-    byDay.push({ date: bucketKey, ...finalizeTotals(bucket) })
-  }
+  const byDay: UsageDay[] = Array.from(dayBuckets, ([date, totals]) => ({ date, ...finalizeTotals(totals) }))
 
   const byModel = [...modelBuckets.values()]
     .map(row => finalizeTotals(row) as UsageTotals & { provider: string, model: string })

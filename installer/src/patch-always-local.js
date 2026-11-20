@@ -21,14 +21,7 @@ function buildPayload() {
   });
 }
 
-export function patchAlwaysLocal(paths, log) {
-  log?.('[always-local] Patching...');
-
-  if (!existsSync(paths.alwaysLocalMain)) throw new Error(`Not found: ${paths.alwaysLocalMain}`);
-  if (!existsSync(paths.extensionHostJs)) throw new Error(`Not found: ${paths.extensionHostJs}`);
-
-  const modified = [];
-  const original = readFileSync(paths.alwaysLocalMain, 'utf-8');
+export function prepareAlwaysLocalRoutingPatch(original, log) {
   let patched = original;
   // 先剥离旧版本路由块 (直接 install 时可能残留), 否则新版会叠加在旧版之上 ——
   // 各版本守卫标记互不相同, 叠加后两层都会包装 http.request
@@ -54,7 +47,18 @@ export function patchAlwaysLocal(paths, log) {
   // 3. Wait for the Cursor++ server before the legacy Agent transport starts.
   const waited = injectActivateWait(patched, 'always-local', log);
   if (!waited.ok) throw new Error('cursor-always-local activate function not found');
-  patched = waited.source;
+  return waited.source;
+}
+
+export function patchAlwaysLocal(paths, log) {
+  log?.('[always-local] Patching...');
+
+  if (!existsSync(paths.alwaysLocalMain)) throw new Error(`Not found: ${paths.alwaysLocalMain}`);
+  if (!existsSync(paths.extensionHostJs)) throw new Error(`Not found: ${paths.extensionHostJs}`);
+
+  const modified = [];
+  const original = readFileSync(paths.alwaysLocalMain, 'utf-8');
+  const patched = prepareAlwaysLocalRoutingPatch(original, log);
 
   if (patched !== original) {
     createBackup(paths.alwaysLocalMain, 'always-local', log);

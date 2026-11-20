@@ -49,21 +49,34 @@ export function ModelCard() {
   return (
     <div
       class="model-item"
+      x-bind:id="'model-editor-' + p.id + '-' + m.id"
       x-data="{ me: {} }"
       x-effect="me = $store.app.getModelErrors(p.id, m.id)"
       x-bind:class="{
         'model-dragging': $store.app.modelDragId === m.id,
         'model-drop-top': $store.app.modelDropEdge(m.id) === 'top',
         'model-drop-bottom': $store.app.modelDropEdge(m.id) === 'bottom',
+        'model-opened': $store.app.modelExpanded[p.id]?.[m.id],
       }"
       {...{ 'x-on:dragover.prevent': '$store.app.hoverModelDuringDrag(m.id, $event)' }}
       {...{ 'x-on:drop.prevent': '$store.app.dropModel(p.id, m.id)' }}
     >
-      <div class="model-head" x-on:click="$store.app.toggleModelExpand(p.id, m.id)">
+      <div class="model-head">
+        <input
+          type="checkbox"
+          class="model-remove-checkbox"
+          x-show="removing"
+          x-cloak
+          x-bind:value="m.id"
+          x-bind:aria-label="'选择删除 ' + (m.displayName || m.apiModel || m.id)"
+          x-model="removeIds"
+          {...{ 'x-on:click.stop': '' }}
+        />
         {/* 拖动握把。单独一个手势区而不是让整条头部可拖，否则想展开时手一抖就变成排序。
             stop 掉 click，避免松开鼠标时顺带把卡片折叠了 */}
         <span
           class="model-drag-handle"
+          x-show="!removing"
           draggable="true"
           title="拖动调整模型在 Cursor 选择器中的顺序"
           {...{ 'x-on:dragstart': '$store.app.beginModelDrag(m.id)' }}
@@ -71,8 +84,11 @@ export function ModelCard() {
           {...{ 'x-on:click.stop': '' }}
         >
         </span>
-        <span class="acc-caret" x-text="$store.app.modelExpanded[p.id]?.[m.id] ? '▼' : '▶'"></span>
-        <span class="model-title" x-text="m.displayName || m.apiModel || m.id || '(unnamed model)'"></span>
+        <button class="model-open ghost" type="button" x-bind:aria-expanded="!!$store.app.modelExpanded[p.id]?.[m.id]" x-bind:aria-controls="'model-settings-' + m.id" x-on:click="$store.app.toggleModelExpand(p.id, m.id)">
+          <span class="model-title" x-bind:title="m.apiModel" x-text="m.displayName || m.apiModel || '未命名模型'"></span>
+          <span class="model-summary" x-show="m.contextTokenLimit || m.maxOutputTokens" x-text="[$store.app.fmtCtx(m.contextTokenLimit), $store.app.fmtCtx(m.maxOutputTokens)].join(' / ')" title="上下文 / 最大输出（Token）"></span>
+          <span class="model-open-label" x-text="$store.app.modelExpanded[p.id]?.[m.id] ? '收起' : '高级'"></span>
+        </button>
         {/* 测试结果徽标 —— 未测试时不渲染, 保持列表干净; 点击即重测或取消 */}
         <template x-if="$store.app.modelTestSummary(m.id)">
           <button
@@ -94,6 +110,7 @@ export function ModelCard() {
         >
           <input
             type="checkbox"
+            x-bind:aria-label="'在 Cursor 中显示 ' + (m.displayName || m.apiModel || '模型')"
             x-bind:checked="m.defaultOn === true"
             x-on:change="$store.app.updateModelField(p.id, m.id, 'defaultOn', $event.target.checked)"
           />
@@ -101,7 +118,7 @@ export function ModelCard() {
           <span class="model-switch-knob"></span>
         </label>
       </div>
-      <div class="model-body" x-show="$store.app.modelExpanded[p.id]?.[m.id]" x-cloak>
+      <div class="model-body" x-bind:id="'model-settings-' + m.id" x-show="$store.app.modelExpanded[p.id]?.[m.id]" x-cloak>
         {/* 只选择端点实际返回的模型，目录参数由宿主自动匹配。 */}
         <div class="field">
           <label>
@@ -140,26 +157,28 @@ export function ModelCard() {
           <div class="err" x-show="me?.displayName" x-text="me?.displayName"></div>
         </div>
 
-        {/* 协议 —— 每模型单独指定。一个中转站里 gemini / gpt / deepseek / glm
-            往往各走各的接口形态, 所以协议挂在模型上才对应真实结构。
-            没手动选过时按模型名自动推导, 角标显示 auto。 */}
         <div class="field">
-          <label>
+          <label x-bind:for="'protocol-' + m.id">
             {'请求协议 '}
-            <span class="label-note" x-show="$store.app.modelProtocolIsAuto(p.id, m.id)">自动</span>
+            <span class="label-note" x-show="$store.app.modelProtocolIsAuto(p.id, m.id)">默认</span>
           </label>
-          <div class="seg">
-            <template x-for="fam in $store.app.modelProtocolOptions()" x-bind:key="fam.value">
-              <button
-                type="button"
-                class="seg-btn"
-                x-bind:class="{ 'active': $store.app.modelProtocolSelection(p.id, m.id) === fam.value }"
-                x-bind:title="fam.hint"
-                x-on:click="$store.app.setModelProtocol(p.id, m.id, fam.value)"
-                x-text="fam.label"
-              >
-              </button>
-            </template>
+          <select x-bind:id="'protocol-' + m.id" x-effect="$el.value = m.customRequestPath === undefined ? $store.app.modelProtocolType(p.id, m.id) : 'custom'" x-on:change="$store.app.setModelProtocol(p.id, m.id, $event.target.value)">
+            <option value="anthropic">Anthropic Messages</option>
+            <option value="openai-chat">OpenAI Chat Completions</option>
+            <option value="openai-responses">OpenAI Responses</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="custom">自定义</option>
+          </select>
+          <div class="custom-protocol-fields" x-show="m.customRequestPath !== undefined" x-cloak>
+            <label x-bind:for="'custom-format-' + m.id">兼容请求格式</label>
+            <select x-bind:id="'custom-format-' + m.id" x-effect="$el.value = $store.app.modelProtocolType(p.id, m.id)" x-on:change="$store.app.setCustomRequestType(p.id, m.id, $event.target.value)">
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="openai-chat">OpenAI Chat Completions</option>
+              <option value="openai-responses">OpenAI Responses</option>
+            </select>
+            <label x-bind:for="'custom-path-' + m.id">请求路径</label>
+            <input type="text" x-bind:id="'custom-path-' + m.id" placeholder="/gateway/chat" x-effect="if(document.activeElement !== $el) $el.value = m.customRequestPath ?? ''" x-on:input="$store.app.setCustomRequestPath(p.id, m.id, $event.target.value)" x-bind:class="{ invalid: me?.customRequestPath }" />
+            <div class="err" x-show="me?.customRequestPath" x-text="me?.customRequestPath"></div>
           </div>
           <div class="endpoint">
             <span class="endpoint-label">请求地址</span>
@@ -184,6 +203,7 @@ export function ModelCard() {
               <button
                 type="button"
                 class="tiny"
+                x-show="m.customRequestPath === undefined"
                 {...{ 'x-bind:disabled': '$store.app.protocolDetecting[m.id] === true' }}
                 x-on:click="$store.app.detectProtocol(p.id, m.id)"
                 {...{ 'x-text': '$store.app.protocolDetecting[m.id] ? \'识别中…\' : \'自动识别\'' }}
@@ -459,7 +479,7 @@ export function ModelCard() {
             <template x-if="$store.app.modelProtocolType(p.id, m.id) === 'anthropic'">
               <div class="qs-item" title="在 Cursor 模型编辑面板中显示思考档位选择器">
                 <div class="qs-row">
-                  <span class="qs-label">思考档位</span>
+                  <span class="qs-label">思考强度</span>
                   <label class="qs-switch">
                     <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.effort)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'effort', $event.target.checked ? ${JSON.stringify(QS_LEVELS_ANTHROPIC)} : undefined)`} />
                     <span class="qs-switch-track"></span>
@@ -497,7 +517,7 @@ export function ModelCard() {
             <template x-if="$store.app.modelProtocolType(p.id, m.id) === 'gemini'">
               <div class="qs-item" title="在 Cursor 模型编辑面板中显示思考档位选择器">
                 <div class="qs-row">
-                  <span class="qs-label">思考档位</span>
+                  <span class="qs-label">思考强度</span>
                   <label class="qs-switch">
                     <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.effort)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'effort', $event.target.checked ? ${JSON.stringify(QS_LEVELS_GEMINI)} : undefined)`} />
                     <span class="qs-switch-track"></span>
@@ -523,7 +543,7 @@ export function ModelCard() {
             <template x-if="$store.app.modelProtocolType(p.id, m.id) === 'openai-chat' || $store.app.modelProtocolType(p.id, m.id) === 'openai-responses'">
               <div class="qs-item" title="在 Cursor 模型编辑面板中显示推理档位选择器（None 为关闭）">
                 <div class="qs-row">
-                  <span class="qs-label">推理档位</span>
+                  <span class="qs-label">思考强度</span>
                   <label class="qs-switch">
                     <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.reasoning)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'reasoning', $event.target.checked ? ${JSON.stringify(QS_LEVELS_OPENAI)} : undefined)`} />
                     <span class="qs-switch-track"></span>

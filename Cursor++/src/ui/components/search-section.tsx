@@ -2,21 +2,21 @@ import { CustomSelect } from './custom-select'
 import { Modal } from './modal'
 
 const SEARCH_PROVIDERS = [
-  { type: 'tavily', name: 'Tavily', needsKey: true, supportsBaseUrl: true, hint: 'Search results tuned for LLMs — 1,000 free calls per month, supports a custom Base URL' },
-  { type: 'duckduckgo', name: 'DuckDuckGo', needsKey: false, supportsBaseUrl: false, hint: 'Free fallback — often blocked by anti-bot (returns 202)' },
+  { type: 'tavily', name: 'Tavily', needsKey: true, supportsBaseUrl: true, hint: '为大语言模型提供搜索结果。每月有 1,000 次免费调用，支持自定义接口地址。' },
+  { type: 'duckduckgo', name: 'DuckDuckGo', needsKey: false, supportsBaseUrl: false, hint: '免费的备用搜索。遇到反自动化限制时，可能返回 HTTP 202。' },
 ] as const
 
 const FETCH_PROVIDERS = [
   {
     type: 'tavily',
     name: 'Tavily Extract',
-    hint: 'Server-side fetch — gets past the Cloudflare challenge pages the built-in fetcher cannot. Reuses the key and Base URL from the Search tab.',
+    hint: '通过 Tavily 服务抓取网页，适合内置工具无法访问的页面。复用「搜索」页的 API 密钥和接口地址。',
     reusesSearchConfig: true,
   },
   {
     type: 'builtin',
-    name: 'Built-in (supermarkdown)',
-    hint: 'Local HTML → Markdown, zero config. Cannot fetch sites behind Cloudflare (linux.do returns 403, for example).',
+    name: '内置抓取（supermarkdown）',
+    hint: '在本地将网页 HTML 转为 Markdown，无需配置。遇到 Cloudflare 验证时可能无法抓取。',
     reusesSearchConfig: false,
   },
 ] as const
@@ -66,6 +66,7 @@ export function WebToolsDialog() {
                 <label class="qs-switch">
                   <input
                     type="checkbox"
+                    aria-label={`启用 ${sp.name}`}
                     x-bind:checked={`$store.app.isSearchProviderEnabled('${sp.type}')`}
                     x-on:change={`$store.app.toggleSearchProvider('${sp.type}', $event.target.checked)`}
                   />
@@ -77,7 +78,8 @@ export function WebToolsDialog() {
                 {sp.needsKey && (
                   <input
                     type="password"
-                    placeholder="API Key"
+                    placeholder="API 密钥"
+                    aria-label="Tavily API 密钥"
                     x-bind:value={`$store.app.getSearchProviderKey('${sp.type}')`}
                     x-on:input={`$store.app.setSearchProviderKey('${sp.type}', $event.target.value)`}
                     autocomplete="off"
@@ -87,7 +89,8 @@ export function WebToolsDialog() {
                   <>
                     <input
                       type="text"
-                      placeholder="Base URL (optional) — e.g. https://api.tavily.com"
+                      placeholder="接口地址（选填），例如 https://api.tavily.com"
+                      aria-label="Tavily 接口地址"
                       x-bind:value={`$store.app.getSearchProviderBaseUrl('${sp.type}')`}
                       x-on:input={`$store.app.setSearchProviderBaseUrl('${sp.type}', $event.target.value)`}
                       autocomplete="off"
@@ -100,8 +103,8 @@ export function WebToolsDialog() {
                         x-on:click={`$store.app.testSearchProvider('${sp.type}')`}
                         x-bind:disabled="$store.app.searchTesting"
                       >
-                        <span x-show="!$store.app.searchTesting">Test connection</span>
-                        <span x-show="$store.app.searchTesting">Testing…</span>
+                        <span x-show="!$store.app.searchTesting">测试连接</span>
+                        <span x-show="$store.app.searchTesting">测试中…</span>
                       </button>
                       <span
                         class="search-test-result"
@@ -115,19 +118,20 @@ export function WebToolsDialog() {
             </div>
           ))}
           <div class="search-options">
-            <label class="check" title="Query all enabled providers in parallel and merge the results">
+            <label class="check" title="同时查询所有已启用的搜索服务，并合并结果">
               <input
                 type="checkbox"
                 x-bind:checked="$store.app.webTools?.search?.parallel === true"
                 x-on:change="$store.app.setSearchOption('parallel', $event.target.checked)"
               />
-              {' Parallel search'}
+              {' 并行搜索'}
             </label>
             <div class="search-max-results">
-              <label>Max results</label>
+              <label>结果上限</label>
               <CustomSelect
                 valueExpr="String($store.app.webTools?.search?.maxResults || 5)"
                 changeExpr="$store.app.setSearchOption('maxResults', Number($value))"
+                title="搜索结果上限"
                 options={[
                   { value: '5', label: '5' },
                   { value: '10', label: '10' },
@@ -141,14 +145,14 @@ export function WebToolsDialog() {
           <div class="search-options" style="border-top:none;padding-top:0;margin-top:8px">
             <label
               class="check"
-              title="When every configured provider fails, fall back to scraping DuckDuckGo. DDG frequently returns an anti-bot page (HTTP 202); this implementation detects that and reports an error instead of treating junk links as results."
+              title="所有已配置的搜索服务均失败时，尝试使用 DuckDuckGo 搜索。"
             >
               <input
                 type="checkbox"
                 x-bind:checked="$store.app.webTools?.search?.fallbackToDuckDuckGo !== false"
                 x-on:change="$store.app.setSearchOption('fallbackToDuckDuckGo', $event.target.checked)"
               />
-              {' Fall back to DuckDuckGo'}
+              {' 搜索失败时使用 DuckDuckGo'}
             </label>
           </div>
         </div>
@@ -186,7 +190,7 @@ export function WebToolsDialog() {
                     class="fetch-provider-goto-search"
                     x-on:click="$store.app.webToolsTab = 'search'"
                   >
-                    Change it on the "Search" tab
+                    前往「搜索」页配置
                   </button>
                   <div class="search-provider-actions">
                     <button
@@ -195,8 +199,8 @@ export function WebToolsDialog() {
                       x-on:click="$store.app.testFetchProvider()"
                       x-bind:disabled="$store.app.fetchTesting"
                     >
-                      <span x-show="!$store.app.fetchTesting">Test connection</span>
-                      <span x-show="$store.app.fetchTesting">Testing…</span>
+                      <span x-show="!$store.app.fetchTesting">测试连接</span>
+                      <span x-show="$store.app.fetchTesting">测试中…</span>
                     </button>
                     <span
                       class="search-test-result"
@@ -212,8 +216,8 @@ export function WebToolsDialog() {
       </div>
 
       <div class="search-dialog-actions">
-        <button x-on:click="$store.app.saveWebTools()">Save</button>
-        <button class="ghost" x-on:click="$store.app.webToolsOpen = false">Cancel</button>
+        <button type="button" x-on:click="$store.app.saveWebTools()">保存</button>
+        <button type="button" class="ghost" x-on:click="$store.app.webToolsOpen = false">取消</button>
       </div>
     </Modal>
   )

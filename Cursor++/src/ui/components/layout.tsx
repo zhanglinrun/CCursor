@@ -2,7 +2,7 @@ import { Banner } from './banner'
 import { ConfirmDialog } from './confirm-dialog'
 import { Footer } from './footer'
 import { Providers } from './providers'
-import { WebToolsButton, WebToolsDialog } from './search-section'
+import { WebToolsDialog } from './search-section'
 import { Server } from './server'
 import { styles } from './styles'
 import { ToastContainer } from './toast'
@@ -33,6 +33,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
     <html lang="zh-CN">
       <head>
         <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <StyleSheet css={codiconCss + styles} />
       </head>
       <body x-data>
@@ -67,31 +68,13 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         </div>
 
         {/* ── 仪表盘 ── */}
-        <div x-show="$store.app.activeTab === 'dashboard'">
-          <h3>
-            <span>本地服务</span>
-            <span
-              class="hint"
-              {...{ 'x-effect': '$el.textContent = \'v\' + ($store.app.state?.version || \'\')' }}
-            >
-            </span>
-          </h3>
+        <div class="dashboard-page" x-show="$store.app.activeTab === 'dashboard'">
           <Server />
           <UsageDashboard />
         </div>
 
         {/* ── 配置 ── */}
         <div class="config-page" x-show="$store.app.activeTab === 'config'" x-cloak>
-          <header class="config-header">
-            <div>
-              <h2>服务商与模型</h2>
-              <p>管理接入地址、密钥和可用模型</p>
-            </div>
-            <div class="config-actions">
-              <WebToolsButton />
-              <button type="button" x-on:click="$store.app.addProvider()">+ 添加服务商</button>
-            </div>
-          </header>
           <Providers />
         </div>
 

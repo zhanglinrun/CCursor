@@ -1,17 +1,22 @@
 import { expect, it } from 'vitest'
 import { renderHtml } from '../../ui/components/layout'
 
-it('renders a Chinese config page with grouped directory controls and collapsed advanced actions', () => {
+it('renders the Chinese service list and editor with native and custom protocols', () => {
   const html = renderHtml('/* synthetic webview */')
   expect(html).toContain('lang="zh-CN"')
   expect(html).toContain('class="config-header"')
-  expect(html).toContain('服务商与模型')
+  expect(html).toContain('aria-label="AI 服务"')
+  expect(html).toContain('role="switch"')
+  expect(html).toContain('class="provider-editor"')
   expect(html).toContain('aria-label="模型目录"')
   expect(html).toContain('class="catalog-toolbar"')
   expect(html).toContain('role="status"')
-  expect(html).toContain('更新目录')
-  expect(html).toContain('获取模型')
-  expect(html).toContain('保存配置')
+  expect(html).toContain('更新模型目录')
+  expect(html).toContain('获取列表')
+  expect(html).toContain('保存服务')
+  expect(html).toContain('搜索已配置模型')
+  for (const protocol of ['anthropic', 'openai-chat', 'openai-responses', 'gemini', 'custom'])
+    expect(html).toContain(`<option value="${protocol}">`)
   expect(html).toContain('启用扩展思考')
   expect(html).toContain('在 Cursor 模型编辑面板中显示推理档位选择器（None 为关闭）')
   expect(html).not.toContain('Expose the')
@@ -19,6 +24,10 @@ it('renders a Chinese config page with grouped directory controls and collapsed 
   expect(html).toContain('editRoutes')
   expect(html).toContain('editProvidersJson')
   expect(html).toContain('checkForUpdates')
+  expect(html).toContain('需要先注入路由补丁')
+  expect(html).toContain('>重新注入</button>')
+  // 补丁缺失时横幅升格为告警条，注入按钮用主按钮样式置顶显示
+  expect(html).toContain('banner-primary')
   expect(html).not.toContain('Last successful update:')
   expect(html).not.toContain('Catalog defaults apply only')
 })

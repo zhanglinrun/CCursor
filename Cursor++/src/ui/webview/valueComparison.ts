@@ -46,6 +46,7 @@ function canonicalProvider(provider: any): any {
     id: provider.id,
     name: provider.name ?? provider.id,
     type: provider.type,
+    enabled: provider.enabled !== false,
     baseUrl: provider.baseUrl ?? '',
     auth: canonicalValue(provider.auth ?? { kind: 'apiKey', value: '' }),
     models: canonicalValue(Array.isArray(provider.models) ? provider.models : []),

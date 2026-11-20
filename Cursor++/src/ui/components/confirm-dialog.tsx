@@ -17,13 +17,15 @@ export function ConfirmDialog() {
           class="modal-dialog confirm-dialog"
           role="alertdialog"
           aria-modal="true"
-          {...{ 'x-effect': '$store.app.confirmDialog && $refs.confirmAction && $refs.confirmAction.focus()' }}
+          aria-labelledby="confirm-dialog-title"
+          aria-describedby="confirm-dialog-message"
+          {...{ 'x-effect': '$store.app.confirmDialog && $refs.cancelAction && $refs.cancelAction.focus()' }}
         >
           <div class="modal-header">
-            <span class="modal-title" x-text="$store.app.confirmDialog?.title"></span>
+            <span id="confirm-dialog-title" class="modal-title" x-text="$store.app.confirmDialog?.title"></span>
           </div>
           <div class="modal-body">
-            <p class="confirm-message" x-text="$store.app.confirmDialog?.message"></p>
+            <p id="confirm-dialog-message" class="confirm-message" x-text="$store.app.confirmDialog?.message"></p>
             <template {...{ 'x-if': '$store.app.confirmDialog?.warning' }}>
               <p class="confirm-warning" x-text="$store.app.confirmDialog?.warning"></p>
             </template>
@@ -31,15 +33,15 @@ export function ConfirmDialog() {
               <button
                 type="button"
                 class="secondary"
+                x-ref="cancelAction"
                 {...{ 'x-on:click': '$store.app.cancelConfirm()' }}
               >
-                Cancel
+                取消
               </button>
               <button
                 type="button"
                 class="danger-solid"
-                x-ref="confirmAction"
-                x-text="$store.app.confirmDialog?.confirmLabel || 'Delete'"
+                x-text="$store.app.confirmDialog?.confirmLabel || '删除'"
                 {...{ 'x-on:click': '$store.app.confirmAction()' }}
               >
               </button>

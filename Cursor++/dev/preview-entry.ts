@@ -111,6 +111,9 @@ export function initPreviewHost(options: PreviewHostOptions): PreviewHost {
         }
       },
     },
+    onDidChangeVisibility() {
+      return { dispose() {} }
+    },
     onDidDispose() {
       return { dispose() {} }
     },

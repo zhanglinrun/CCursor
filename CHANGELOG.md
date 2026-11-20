@@ -8,6 +8,16 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.6 — 标准 VSIX 安装、一键重新注入与面板入口重构
+
+- 安装形态改为 Cursor 原生「从 VSIX 安装」的标准扩展：扩展本体只落在 `~/.cursor/extensions`，不再往 Cursor 程序目录塞扩展。Cursor 升级只覆盖程序目录，扩展与服务商、模型配置（`~/.ccursor`）都保留。
+- 新增 `installer inject` 与 `check --routing-only`：路由补丁与扩展解耦，可单独预检和重新施加。内存中先构建全部补丁再落盘，目标文件形态不符或备份过期时整体中止，写入失败回滚，重复执行为幂等（已是最新则报告 current）。
+- 面板新增「重新注入」：确认后写入任务锁并拉起后台 worker，等 Cursor 正常退出后注入路由、再按原 `--user-data-dir` / `--extensions-dir` 重开。worker 与依赖已内联进扩展，VSIX-only 安装不需要 Node 或 npm。
+- 路由补丁缺失时顶部横幅升格为置顶告警条（告警色 + 主按钮），并隐藏 BYOK 开关——补丁没注入前自有模型本来就不会生效。注入过程若卡在 Cursor 自身的退出确认，15 秒后提示用户去对话框选择「退出」。
+- 修复 worker 把退出后残留的 `--type=crashpad-handler` 进程误判为「Cursor 仍在运行」的问题；同一判定在 macOS / Linux 上也排除 Helper 与 crashpad 进程。
+- 更新检查与安装提示补齐中文：面板内的检查、安装、失败提示，以及后台定时检查的「现在更新 / 发行说明 / 稍后」。
+- 补丁管线按 Cursor 3.31 重新核对：`patch-inject`、`patch-always-local`、`patch-agent-host*`、`patch-proxy-39` 与 checksums 同步更新，`extensionHostProcess.js` 的签名校验行保持原样。
+
 ## 0.1.5 — 会话兼容、请求取消与模型目录自动刷新
 
 - 使用 Cursor 兼容的会话格式写入客户端，保留工具结果和附图。旧会话在下一次 BYOK 请求中尝试迁移，客户端确认写入后才替换引用。压缩写入未获确认时保留原历史。

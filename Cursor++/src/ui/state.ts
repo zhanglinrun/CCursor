@@ -25,6 +25,7 @@ export interface AppState {
   host: string
   port: number
   byokMode: ByokMode
+  routingPatchPresent?: boolean
   providers: ProviderEntry[]
   webTools: import('../server/data/defaults').WebToolsConfig
   version: string
@@ -47,6 +48,10 @@ let current: AppState = {
   webTools: { $schemaVersion: 1, search: { providers: [], parallel: false, maxResults: 5, fallbackToDuckDuckGo: true }, fetch: { provider: 'tavily' } },
   fileLogEnabled: false,
   logFilePath: '',
+}
+
+export function setRoutingPatchPresent(present: boolean): void {
+  current = { ...current, routingPatchPresent: present }
 }
 
 /** 文件日志状态由 extension.ts 注入 (globalState + 实际写入 stream) */
@@ -166,6 +171,7 @@ export async function refreshState(_secrets?: vscode.SecretStorage): Promise<App
     port: cfg.port,
     byokMode,
     providers,
+    routingPatchPresent: current.routingPatchPresent,
     webTools: getWebTools(),
     version: EXTENSION_VERSION,
     fileLogEnabled: current.fileLogEnabled,

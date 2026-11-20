@@ -2,17 +2,20 @@ import type { ByokMode } from './server/data/defaults'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
+import { hasCursorRoutingPatch } from './cursor-routing'
+import { registerRoutingRestart } from './routing-restart'
 import { bumpRefreshSignal, bumpRefreshSignalForModeChange, pushRoutesUpdate, startServer, stopServer } from './server'
 import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
 import { ensureRoutesFile, getByokMode, loadRoutes, onRoutesChange, requestByokMode, startRoutesWatcher, stopRoutesWatcher } from './server/config/routesStore'
+import { setCursorAppRoot } from './server/database/sqlite'
 import { isLikelyWindowsMsvcMissing, preflightSupermarkdown, setSupermarkdownNativeErrorNotifier } from './server/handlers/agent/supermarkdown'
 import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
 import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
-import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState } from './ui/state'
+import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState, setRoutingPatchPresent } from './ui/state'
 import { startUpdateCheck, stopUpdateCheck } from './update-check'
 import { EXTENSION_VERSION, isNewerVersion } from './version'
 
@@ -385,6 +388,13 @@ function stopHeartbeat() {
 
 function renderStatusBar() {
   const s = getState()
+  if (s.routingPatchPresent === false) {
+    statusBarItem.text = '$(warning) Cursor++'
+    statusBarItem.tooltip = '尚未检测到 Cursor 路由补丁。点击重新注入。'
+    statusBarItem.command = 'cursor2plus.injectRouting'
+    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground')
+    return
+  }
 
   // server 状态前缀 codicon: ✓ on / ✗ offline (close 是 × 不是字母 x)
   const serverIcon = s.server === 'offline' ? '$(close)' : '$(check)'
@@ -426,7 +436,7 @@ function renderStatusBar() {
  * 被路由拦到本地服务。只在 BYOK 开启时关闭, OFF 模式保持 Cursor 原行为。
  */
 async function disableStartupConnectTransport(): Promise<void> {
-  if (getByokMode() !== 1)
+  if (getByokMode() !== 1 || getState().routingPatchPresent === false)
     return
 
   const settingKey = 'cursor.experimental.startupConnectTransport'
@@ -582,6 +592,10 @@ async function doStartServer() {
 // ── 激活 ──
 
 export async function activate(context: vscode.ExtensionContext) {
+  setCursorAppRoot(vscode.env.appRoot)
+  const routingPatchPresent = hasCursorRoutingPatch(vscode.env.appRoot)
+  setRoutingPatchPresent(routingPatchPresent)
+  registerRoutingRestart(context)
   outputChannel = vscode.window.createOutputChannel('Cursor++', { log: true })
   initLogger((level, msg) => writeToChannel({ level, msg }))
   setupSupermarkdownNativeTip()
@@ -609,6 +623,10 @@ export async function activate(context: vscode.ExtensionContext) {
    * 只有状态实际变化时才推送路由、刷新模型列表、弹出提示; 重复请求为空操作。
    */
   async function applyByokRequest(target: ByokMode | 'toggle', source: string): Promise<void> {
+    if (!routingPatchPresent && target !== 0) {
+      await vscode.commands.executeCommand('cursor2plus.injectRouting')
+      return
+    }
     const { routes: next, changed } = await requestByokMode(target, source)
     await refreshState()
     renderStatusBar()
@@ -626,61 +644,6 @@ export async function activate(context: vscode.ExtensionContext) {
     bumpRefreshSignalForModeChange()
     const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
     vscode.window.showInformationMessage(`${label}. The model list will refresh automatically.`)
-    promptRemoteReloadIfNeeded(next.byokMode)
-  }
-
-  /**
-   * 本窗口实际的 agent 拓扑: true = extension-host (cursor-agent-host 扩展), false = legacy。
-   *
-   * 来源 vscode.cursor.cursorAgentHostEnabled (Cursor 3.13+), 值取自 renderer 的
-   * CursorAgentHostEnablementService —— 即 installer 拓扑守卫 (agent-host-topology.js) 改写后的最终决定。
-   *
-   * 两道 proposal 门 (extensionHostProcess.js, 3.27.22 实测):
-   *   - 外层: vscode.cursor 上每个成员都被包成 CA("cursor", …) → 需要 proposal "cursor"
-   *   - 内层: getter 自身 X(P, "cursorAgentHost") → 需要 proposal "cursorAgentHost"
-   *   cursor 系列 proposal 额外要求 isBuiltin; installer 把 Cursor++ 释放为内置扩展
-   *   (Cursor.app/extensions/cursor2plus), 满足条件。
-   * 读不到时带回错误首行 (如 "CANNOT use API proposal: cursor"), 供日志诊断。
-   */
-  function readAgentHostTopology(): { enabled?: boolean, error?: string } {
-    try {
-      const value = (vscode as unknown as { cursor?: { cursorAgentHostEnabled?: unknown } }).cursor?.cursorAgentHostEnabled
-      return typeof value === 'boolean' ? { enabled: value } : { error: `vscode.cursor.cursorAgentHostEnabled is ${typeof value}` }
-    }
-    catch (error) {
-      return { error: (error instanceof Error ? error.message : String(error)).split('\n')[0] }
-    }
-  }
-
-  /**
-   * 远端窗口 (Remote-SSH / WSL / Dev Container) + BYOK 开 + 拓扑为 extension-host 时, cursor-agent-host 跑在远端,
-   * 够不到本机 BYOK server, BYOK 模型名被直发官方 (ERROR_BAD_MODEL_NAME, PR #33)。拓扑只在窗口启动时决定,
-   * 需要 Reload Window 让 installer 拓扑守卫重新决策 (届时 BYOK 开 → legacy)。
-   *
-   * 检查时机: 激活时 (覆盖启动即错配, 如 Cursor 关闭期间改了 routes.json) + 每次 BYOK 模式变化。
-   * 拓扑为 legacy (守卫或 Cursor 自身决定) 时 BYOK 开关两个方向都可用, 不提示。
-   */
-  let remoteReloadPrompted = false
-
-  function promptRemoteReloadIfNeeded(mode: ByokMode): void {
-    if (!vscode.env.remoteName)
-      return
-    if (!mode) {
-      remoteReloadPrompted = false
-      return
-    }
-    // 同一窗口里 applyByokRequest 与 onRoutesChange 会先后触发, 只提示一次
-    if (remoteReloadPrompted || readAgentHostTopology().enabled !== true)
-      return
-    remoteReloadPrompted = true
-    log('warn', `[TOPOLOGY] remote window (${vscode.env.remoteName}) runs the remote agent host while BYOK is on — reload required`)
-    void vscode.window.showWarningMessage(
-      `BYOK is on, but this remote window (${vscode.env.remoteName}) started with Cursor's remote agent host, which cannot reach the local BYOK server. Reload the window to route Agent requests through BYOK.`,
-      'Reload Window',
-    ).then((choice) => {
-      if (choice)
-        void vscode.commands.executeCommand('workbench.action.reloadWindow')
-    })
   }
 
   context.subscriptions.push(
@@ -709,10 +672,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // 确保配置文件存在 —— 即使 server 未启动,面板也能读写
   await ensureRoutesFile()
   await ensureProvidersFile()
-  // 每个窗口都记录实际拓扑: 本地窗口即可验证 proposal 已放行 (unknown = getter 不可用)
-  const topology = readAgentHostTopology()
-  log('info', `[TOPOLOGY] ${vscode.env.remoteName ? `remote window (${vscode.env.remoteName})` : 'local window'}, agent host topology: ${topology.enabled === undefined ? `unknown (${topology.error})` : topology.enabled ? 'extension-host' : 'legacy'}`)
-  promptRemoteReloadIfNeeded(loadRoutes().byokMode)
+  log('info', `[ROUTING] ${routingPatchPresent ? 'Cursor routing patch detected' : 'Cursor routing patch not detected'}`)
 
   // BYOK 开启时必须关掉主进程的启动期 fetch 通道,否则官方模型列表会绕过本地路由
   await disableStartupConnectTransport()
@@ -728,7 +688,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const routes = loadRoutes()
     pushRoutesUpdate(routes.redirect)
     bumpRefreshSignalForModeChange()
-    promptRemoteReloadIfNeeded(routes.byokMode)
   })
   const disposeProvidersWatch = onProvidersChange(async () => {
     resetProviderInstanceCache() // 清除缓存的 SDK client, 下次请求用新 baseUrl/apiKey

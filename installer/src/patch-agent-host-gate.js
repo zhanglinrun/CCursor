@@ -151,6 +151,32 @@ function locateRhs(code, label) {
   return { rhsStart, end: node.end, source: code.slice(rhsStart, node.end) };
 }
 
+export function prepareAgentHostGatePatch(code, label, log) {
+  if (isAgentHostGatePatched(code)) {
+    log?.(`[agent-gate] ${label}: already patched`);
+    return { source: code };
+  }
+  if (!hasAgentHostGateAnchor(code)) {
+    log?.(`[agent-gate] ${label}: no ${FIELD_NEEDLE} anchor, skipping`);
+    return { source: code };
+  }
+
+  const rhs = locateRhs(code, label);
+  if (!rhs) {
+    throw new Error(`[agent-gate] ${label}: assignment anchor not found`);
+  }
+  // 压缩产物里 RHS 必然很短且不含换行; 否则说明定位偏了, 宁可不改
+  if (rhs.source.length > 200 || rhs.source.includes('\n')) {
+    throw new Error(`[agent-gate] ${label}: RHS looks wrong ("${rhs.source.slice(0, 60)}")`);
+  }
+
+  const patched = code.slice(0, rhs.rhsStart) + 'false' + AGENT_HOST_GATE_MARKER + code.slice(rhs.end);
+  if (patched === code || !isAgentHostGatePatched(patched)) {
+    throw new Error(`[agent-gate] ${label}: patch produced no change`);
+  }
+  return { source: patched, previousRhs: rhs.source };
+}
+
 /**
  * 应用补丁。返回被修改的文件数。
  * 无锚点 (pre-3.23) 时静默跳过; 有锚点但结构不符时抛出 (fail loud)。
@@ -170,33 +196,13 @@ export function patchAgentHostGate(paths, log) {
       continue;
     }
     const code = readFileSync(path, 'utf-8');
-    if (isAgentHostGatePatched(code)) {
-      log?.(`[agent-gate] ${label}: already patched`);
-      continue;
-    }
-    if (!hasAgentHostGateAnchor(code)) {
-      log?.(`[agent-gate] ${label}: no ${FIELD_NEEDLE} anchor, skipping`);
-      continue;
-    }
-
-    const rhs = locateRhs(code, label);
-    if (!rhs) {
-      throw new Error(`[agent-gate] ${label}: assignment anchor not found`);
-    }
-    // 压缩产物里 RHS 必然很短且不含换行; 否则说明定位偏了, 宁可不改
-    if (rhs.source.length > 200 || rhs.source.includes('\n')) {
-      throw new Error(`[agent-gate] ${label}: RHS looks wrong ("${rhs.source.slice(0, 60)}")`);
-    }
-
-    const patched = code.slice(0, rhs.rhsStart) + 'false' + AGENT_HOST_GATE_MARKER + code.slice(rhs.end);
-    if (patched === code || !isAgentHostGatePatched(patched)) {
-      throw new Error(`[agent-gate] ${label}: patch produced no change`);
-    }
+    const { source: patched, previousRhs } = prepareAgentHostGatePatch(code, label, log);
+    if (patched === code) continue;
 
     createBackup(path, TAG, log);
     writeFileSync(path, patched);
     modified.push(path);
-    log?.(`[agent-gate] ${label}: cursor_agent_host forced off (was "${rhs.source}")`);
+    log?.(`[agent-gate] ${label}: cursor_agent_host forced off (was "${previousRhs}")`);
   }
 
   if (modified.length > 0) {

@@ -1,33 +1,25 @@
 import { ModelsSection } from './models-section'
 import { ProviderFields } from './provider-fields'
 
-/** 单个 Provider 折叠面板 — 在 x-for="p in ..." 作用域内使用 */
-export function ProviderAccordion() {
+export function ProviderEditor() {
   return (
-    <div class="acc" {...{ 'x-bind:class': '{ \'dirty\': $store.app.isDirty(p.id) }' }}>
-      {/* Head — 始终可见 */}
-      <div class="acc-head" {...{ 'x-on:click': '$store.app.toggleExpand(p.id)' }}>
-        <span class="acc-caret" {...{ 'x-text': '$store.app.expanded[p.id] ? \'▼\' : \'▶\'' }}></span>
-        <span class="acc-title" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).name || \'未命名服务商\'' }}></span>
-        {/* 显示人类可读的协议名, 而不是内部枚举 openai-responses */}
-        <span class="acc-type" {...{ 'x-text': '$store.app.typeLabel(p.id)' }}></span>
-        <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' 个模型\'' }}></span>
-        <span class="acc-dot" title="有未保存的更改" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
-        <span class="acc-sort" {...{ 'x-on:click.stop': '' }}>
-          <button class="sort-btn" title="上移" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': 'pIdx > 0' }}>&#9650;</button>
-          <button class="sort-btn" title="下移" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': 'pIdx < $store.app.providers.length - 1' }}>&#9660;</button>
-        </span>
-      </div>
-      {/* Body — 可折叠 */}
-      <div class="acc-body" {...{ 'x-show': '$store.app.expanded[p.id]' }} x-cloak>
+    <section class="provider-editor" x-data="{ listProtocol: '', advancedOpen: false, get advancedVisible() { return this.advancedOpen || $store.app.headersInvalid[p.id] || $store.app.validate(p.id).errors.authKind } }" x-init="$nextTick(() => $refs.editorTitle.focus())" aria-labelledby="provider-editor-title">
+      <header class="provider-edit-toolbar">
+        <h2 id="provider-editor-title" x-ref="editorTitle" tabindex={-1} x-text="$store.app.baseProvider(p.id) ? '编辑 AI 服务' : '添加 AI 服务'"></h2>
+        <div class="config-actions">
+          <button type="button" class="ghost" x-bind:aria-expanded="!!advancedVisible" x-bind:aria-controls="'provider-advanced-' + p.id" x-on:click="advancedOpen = !advancedOpen; if (advancedOpen) $nextTick(() => $refs.connectionAdvanced?.scrollIntoView({ block: 'nearest' }))">高级设置</button>
+          <button type="button" class="ghost" x-bind:disabled="!p.models?.length || !!$store.app.batchTesting[p.id]" x-on:click="$store.app.testAllModels(p.id)" x-text="$store.app.batchTesting[p.id] ? '测试中…' : '测试模型'">测试模型</button>
+          <button type="button" class="ghost" x-bind:disabled="!!$store.app.savingProviders[p.id]" x-on:click="$store.app.cancelProviderEdit(p.id)">取消</button>
+          <button type="button" class="settings-primary" x-bind:disabled="!$store.app.isDirty(p.id) || !!$store.app.savingProviders[p.id]" x-on:click="$store.app.saveProvider(p.id)" x-text="$store.app.savingProviders[p.id] ? '保存中…' : '保存服务'">保存服务</button>
+        </div>
+      </header>
+      <div class="provider-editor-body">
         <ProviderFields />
         <ModelsSection />
-        <div class="actions-bar">
-          <button class="danger" {...{ 'x-on:click': '$store.app.requestDeleteProvider(p.id)' }}>删除服务商</button>
-          <button class="ghost" {...{ 'x-on:click': '$store.app.resetProvider(p.id)' }}>撤销更改</button>
-          <button {...{ 'x-on:click': '$store.app.saveProvider(p.id)' }}>保存配置</button>
-        </div>
       </div>
-    </div>
+      <div class="actions-bar" x-show="$store.app.baseProvider(p.id)">
+        <button type="button" class="danger" x-bind:disabled="!!$store.app.savingProviders[p.id]" x-on:click="$store.app.requestDeleteProvider(p.id)">删除服务商</button>
+      </div>
+    </section>
   )
 }

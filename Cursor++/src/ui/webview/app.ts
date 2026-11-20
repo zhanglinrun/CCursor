@@ -6,9 +6,8 @@
  */
 import type { Alpine as AlpineType } from 'alpinejs'
 import type { CatalogStatus } from '../../server/config/catalogStore'
-import type { ProviderType } from '../../server/data/defaults'
+import type { ProviderModel, ProviderType } from '../../server/data/defaults'
 import type { ModelTestResult, ProtocolAttempt, ProtocolDetection } from '../../shared/modelTestTypes'
-import type { ProtocolFamily, ProtocolFamilyOption } from '../../shared/providerProtocol'
 import type { RemoteModelEntry } from '../../shared/remoteModels'
 import type { UsageSummary } from '../../shared/usageTypes'
 import { isProviderType } from '../../server/data/defaults'
@@ -17,13 +16,12 @@ import { reorderById } from '../../shared/listReorder'
 import {
   buildRequestUrlPreview,
   checkBaseUrlShape,
+  customRequestUrl,
   defaultProtocolForModel,
   describeProviderType,
-  familyOf,
-  materializeModelProtocols,
-  PROTOCOL_FAMILY_OPTIONS,
-  providerTypeOf,
+  isCustomRequestType,
 } from '../../shared/providerProtocol'
+import { PROVIDER_PRESETS } from '../providerPresets'
 import { clone, describeAttempt, errorHintFor, errorLabelFor, providersEqual, uid } from './valueComparison'
 
 declare function acquireVsCodeApi(): { postMessage: (msg: any) => void, getState: () => any, setState: (s: any) => void }
@@ -64,7 +62,7 @@ export function initApp(Alpine: AlpineType) {
     },
     // ── 本地 UI 状态 ──
     drafts: {} as Record<string, any>,
-    expanded: {} as Record<string, boolean>,
+    editingProviderId: '',
     modelExpanded: {} as Record<string, Record<string, boolean>>,
     headersInvalid: {} as Record<string, boolean>,
 
@@ -75,7 +73,8 @@ export function initApp(Alpine: AlpineType) {
     modelDragOverId: '' as string,
     modelDragAfter: false,
 
-    remoteModels: {} as Record<string, { loading: boolean, models?: RemoteModelEntry[], error?: string }>,
+    remoteModels: {} as Record<string, { loading: boolean, requestId?: string, models?: RemoteModelEntry[], error?: string }>,
+    importedModelIds: {} as Record<string, string[]>,
     saveSnapshots: {} as Record<string, { targetIds: string[], snapshots: Record<string, any> }>,
     savingProviders: {} as Record<string, boolean>,
 
@@ -96,6 +95,7 @@ export function initApp(Alpine: AlpineType) {
     usageOpen: false,
     usageLoading: false,
     usageStats: null as UsageSummary | null,
+    usageRequestId: '',
     usageError: '',
 
     // ── 二次确认弹窗 ──
@@ -103,13 +103,13 @@ export function initApp(Alpine: AlpineType) {
     // 存描述符而不是闭包：Alpine 会把 state 包成 reactive proxy，
     // 把函数放进去既没必要也让序列化/调试变复杂。动作由 kind 分支还原。
     confirmDialog: null as null | {
-      kind: 'deleteProvider' | 'removeModel'
+      kind: 'deleteProvider' | 'removeModels'
       title: string
       message: string
       warning?: string
       confirmLabel: string
       pid: string
-      mid?: string
+      modelIds?: string[]
     },
 
     // ── 子页签 ──
@@ -195,15 +195,15 @@ export function initApp(Alpine: AlpineType) {
       if (!hasKey) {
         return {
           level: 'warn',
-          text: 'No Tavily API key found — add one on the "Search" tab. Until then, fetch falls back to the built-in converter (which cannot reach sites behind Cloudflare).',
+          text: '请在「搜索」页填写 Tavily API 密钥。填写前将使用内置抓取。',
         }
       }
       const baseUrl = entry?.baseUrl?.trim()
       return {
         level: 'ok',
         text: baseUrl
-          ? `Reusing the key from the "Search" tab; all fetches go to ${baseUrl}.`
-          : 'Reusing the key from the "Search" tab via the official api.tavily.com endpoint.',
+          ? `已复用「搜索」页的密钥，抓取请求将发往 ${baseUrl}`
+          : '已复用「搜索」页的密钥，抓取请求将发往 api.tavily.com',
       }
     },
     testFetchProvider() {
@@ -223,7 +223,6 @@ export function initApp(Alpine: AlpineType) {
         return
       this.post('saveWebTools', { config: JSON.parse(JSON.stringify(this.webTools)) })
       this.webToolsOpen = false
-      this.toast('Web tools config saved', 'info')
     },
 
     // ── Toast ──
@@ -264,7 +263,7 @@ export function initApp(Alpine: AlpineType) {
       return '检查扩展更新'
     },
 
-    modelDefaultsPending: {} as Record<string, { pid: string, mid: string, apiModel: string, before: Record<string, any> }>,
+    modelDefaultsPending: {} as Record<string, { pid: string, mid: string, apiModel: string, before: Record<string, any>, remote?: RemoteModelEntry }>,
 
     // ── 派生 ──
     get providers(): any[] {
@@ -290,12 +289,12 @@ export function initApp(Alpine: AlpineType) {
       if (!s)
         return ''
       if (s.server === 'local')
-        return `Running on :${s.port} (this window)`
+        return `当前窗口运行中 · 端口 ${s.port}`
       if (s.server === 'remote')
-        return `Running on :${s.port} (another window)`
+        return `其他窗口运行中 · 端口 ${s.port}`
       if (s.serverIssue === 'port_occupied')
-        return `Port :${s.port} is occupied by another process`
-      return 'Not running'
+        return `端口 ${s.port} 已被其他程序占用`
+      return '服务未运行'
     },
 
     // ── Draft 管理 ──
@@ -333,6 +332,8 @@ export function initApp(Alpine: AlpineType) {
     },
 
     isDirty(pid: string): boolean {
+      if (this.headersInvalid[pid])
+        return true
       const draft = this.drafts[pid]
       if (!draft)
         return false
@@ -342,38 +343,11 @@ export function initApp(Alpine: AlpineType) {
       return !providersEqual(base, draft)
     },
 
-    // ── 协议 ──
-    //
-    // 协议**只挂在模型上**。一个中转站（一个地址、一个 Key）通常同时挂着
-    // gpt / gemini / grok / glm / deepseek，各家走各的接口形态 —— 中转站自己
-    // 内部就分流了，用户不需要、也无从判断"这个中转站属于哪一类协议"。
-    // 所以中转站那层不再有协议设置，模型那层也不再需要"继承"这回事。
-    //
-    // 存储层仍是 4 个平铺的 ProviderType（见 src/shared/providerProtocol.ts），
-    // 只是选择权从 provider 挪到了 model。
-
-    /**
-     * 折叠头部的一行摘要 —— 中转站下各模型分别用哪套协议。
-     *
-     * 一个中转站下混挂多家模型是常态，只显示一个协议名会误导，所以列出
-     * 去重后的协议名；还没有填 API Model 的模型不参与统计。
-     */
-    typeLabel(pid: string): string {
-      const models = this.getDraft(pid).models || []
-      const labels: string[] = []
-      for (const m of models) {
-        if (!m?.apiModel?.trim())
-          continue
-        const label = describeProviderType(this.modelProtocolType(pid, m.id))
-        if (!labels.includes(label))
-          labels.push(label)
-      }
-      return labels.join(' · ')
-    },
-
     /** baseURL 形状检查 —— 只关心会静默失败的那几个坑。按模型算，因为路径由协议决定 */
     baseUrlShape(pid: string, mid: string): { level: 'warn' | 'info', message: string } | null {
       const p = this.getDraft(pid)
+      if (this.getModel(pid, mid)?.customRequestPath !== undefined)
+        return null
       return checkBaseUrlShape(this.modelProtocolType(pid, mid), p.baseUrl ?? '')
     },
 
@@ -484,12 +458,14 @@ export function initApp(Alpine: AlpineType) {
      * 刻意串行：并发打同一个端点容易被限流，而且并发请求会互相抢带宽，
      * 让 tokens/s 这个指标失去可比性 —— 批量测试的价值恰恰在于横向比较。
      */
-    async testAllModels(pid: string) {
+    async testAllModels(pid: string, importedOnly = false) {
       if (this.batchTesting[pid])
         return
-      const models = (this.getDraft(pid).models || []).filter((m: any) => m?.apiModel?.trim())
+      const models: ProviderModel[] = importedOnly
+        ? this.importReview(pid).ready
+        : (this.getDraft(pid).models || []).filter((m: ProviderModel) => m.apiModel?.trim())
       if (models.length === 0) {
-        this.toast('Nothing to test: fill in API Model for the model first', 'warn')
+        this.toast('没有可测试的模型，请先检查模型 ID 和参数', 'warn')
         return
       }
       this.batchTesting = { ...this.batchTesting, [pid]: true }
@@ -506,6 +482,12 @@ export function initApp(Alpine: AlpineType) {
     _testResolvers: {} as Record<string, () => void>,
 
     _runTestAndWait(pid: string, mid: string, overrideType?: ProviderType): Promise<void> {
+      const model = this.getModel(pid, mid)
+      const error = model && this.customRequestError(pid, model)
+      if (error) {
+        this.toast(error, 'warn')
+        return Promise.resolve()
+      }
       return new Promise((resolve) => {
         const testId = uid('test')
         this._testResolvers[testId] = resolve
@@ -516,7 +498,7 @@ export function initApp(Alpine: AlpineType) {
           mid,
           overrideType,
           // 带上 draft：用户常是「改完地址立刻想测」，此时还没保存
-          draft: JSON.parse(JSON.stringify(this.getDraft(pid))),
+          draft: this.materializeModelProtocols(clone(this.getDraft(pid))),
         })
       })
     },
@@ -534,9 +516,13 @@ export function initApp(Alpine: AlpineType) {
     /** 该模型实际生效的协议：显式选定的优先，否则按模型名推导 */
     modelProtocolType(pid: string, mid: string): ProviderType {
       const draft = this.getDraft(pid)
-      const model = (draft.models || []).find((m: any) => m.id === mid)
+      const model = this.getModel(pid, mid)
       if (isProviderType(model?.type))
         return model.type
+      const saved = this.baseProvider(pid)
+      const original = saved?.models?.find((item: ProviderModel) => item.id === mid)
+      if (original && original.apiModel === model?.apiModel && isProviderType(saved.type))
+        return saved.type
       return defaultProtocolForModel(draft.baseUrl ?? '', model?.apiModel ?? '')
     },
 
@@ -552,55 +538,56 @@ export function initApp(Alpine: AlpineType) {
     /** 该模型实际请求到的完整地址 —— 协议不同路径就不同，必须按模型算 */
     modelRequestUrlPreview(pid: string, mid: string): string {
       const draft = this.getDraft(pid)
+      const path = this.getModel(pid, mid)?.customRequestPath
+      if (path !== undefined)
+        return customRequestUrl(draft.baseUrl, path) ?? '—'
       return buildRequestUrlPreview(this.modelProtocolType(pid, mid), draft.baseUrl ?? '')
     },
 
-    /**
-     * 显式指定模型协议。
-     *
-     * 参数是**协议家族**而不是 ProviderType —— 分段控件给的是用户视角的三档
-     * （Anthropic / OpenAI / Gemini），而 'openai' 不是合法的 ProviderType。
-     * 这里必须映射一次，否则会往配置里写进一个 isProviderType 不认的值，
-     * 结果是"点了没反应"（回落成自动推导）。
-     */
-    setModelProtocol(pid: string, mid: string, family: ProtocolFamily) {
-      const draft = this.ensureDraft(pid)
-      const model = (draft.models || []).find((m: any) => m.id === mid)
+    setModelProtocol(pid: string, mid: string, choice: ProviderType | 'custom') {
+      const model = this.ensureDraft(pid).models?.find((item: ProviderModel) => item.id === mid)
       if (!model)
         return
-      model.type = providerTypeOf(family)
+      if (choice === 'custom') {
+        const current = this.modelProtocolType(pid, mid)
+        model.type = isCustomRequestType(current) ? current : 'openai-chat'
+        model.customRequestPath ??= ''
+      }
+      else if (isProviderType(choice)) {
+        model.type = choice
+        delete model.customRequestPath
+      }
       this.normalizeAuthKind(pid)
-      // 探测结果描述的是旧协议，留着会误导
       this.clearModelTest(mid)
       this.protocolDetections = { ...this.protocolDetections, [mid]: null }
     },
 
-    /**
-     * 把自动推导出的协议固化到每个模型上。
-     *
-     * 交给 shared/providerProtocol 实现而不是在这里重写：服务端在测试路径上也要
-     * 做同一件事（见 panel-provider 的 testModel），两处必须用同一套规则。
-     */
+    setCustomRequestType(pid: string, mid: string, type: ProviderType) {
+      if (!isProviderType(type) || !isCustomRequestType(type))
+        return
+      this.updateModelField(pid, mid, 'type', type)
+      this.normalizeAuthKind(pid)
+      this.clearModelTest(mid)
+    },
+
+    setCustomRequestPath(pid: string, mid: string, path: string) {
+      this.updateModelField(pid, mid, 'customRequestPath', path)
+      this.clearModelTest(mid)
+    },
+
+    customRequestError(pid: string, model: ProviderModel): string | undefined {
+      if (model.customRequestPath === undefined)
+        return
+      if (!isCustomRequestType(this.modelProtocolType(pid, model.id)))
+        return '请选择兼容的请求格式'
+      if (!customRequestUrl(this.getDraft(pid).baseUrl, model.customRequestPath))
+        return '请输入同一服务下以 / 开头的请求路径'
+    },
+
     materializeModelProtocols(provider: any): any {
-      return materializeModelProtocols(provider)
-    },
-
-    /**
-     * 可选协议家族 —— 每套协议对每个模型都是候选，不做过滤。
-     * 参数只为模板调用方便而保留。
-     */
-    modelProtocolOptions(): readonly ProtocolFamilyOption[] {
-      return PROTOCOL_FAMILY_OPTIONS
-    },
-
-    /** 当前生效协议所属的家族（用于高亮分段控件） */
-    modelProtocolSelection(pid: string, mid: string): ProtocolFamily {
-      return familyOf(this.modelProtocolType(pid, mid))
-    },
-
-    /** 人类可读的协议名 —— 折叠头部的标签用 */
-    modelProtocolLabel(pid: string, mid: string): string {
-      return describeProviderType(this.modelProtocolType(pid, mid))
+      for (const model of provider.models || [])
+        model.type = this.modelProtocolType(provider.id, model.id)
+      return provider
     },
 
     /** 探测结果明细 —— 全部打不通时把每种协议各自的错误列出来 */
@@ -637,19 +624,22 @@ export function initApp(Alpine: AlpineType) {
           pid,
           mid,
           // 带上 draft：用户常是「填完地址立刻想探一下」，此时还没保存
-          draft: JSON.parse(JSON.stringify(this.getDraft(pid))),
+          draft: this.materializeModelProtocols(clone(this.getDraft(pid))),
         })
       })
     },
 
     async detectProtocol(pid: string, mid: string) {
-      if (this.protocolDetecting[mid])
+      if (this.protocolDetecting[mid] || this.getModel(pid, mid)?.customRequestPath !== undefined)
         return
       const before = this.modelProtocolType(pid, mid)
       this.protocolDetecting = { ...this.protocolDetecting, [mid]: true }
       this.protocolDetections = { ...this.protocolDetections, [mid]: null }
       try {
         const outcome = await this._detectAndWait(pid, mid)
+        const current = this.getModel(pid, mid)
+        if (!current || current.customRequestPath !== undefined || this.modelProtocolType(pid, mid) !== before)
+          return
         if (!outcome.ok || !outcome.detection) {
           this.toast(`Protocol detection failed: ${outcome.error ?? 'unknown error'}`, 'error', 8000)
           return
@@ -689,29 +679,25 @@ export function initApp(Alpine: AlpineType) {
         this.loadUsageStats()
     },
 
-    loadUsageStats() {
+    loadUsageStats(windowDays?: 7 | 14) {
       if (this.usageLoading)
         return
       this.usageLoading = true
       this.usageError = ''
-      this.post('loadUsageStats', { requestId: uid('usage') })
+      this.clearUsageHover()
+      this.usageRequestId = uid('usage')
+      this.post('loadUsageStats', { requestId: this.usageRequestId, windowDays: windowDays ?? this.usageStats?.windowDays ?? 14 })
     },
 
-    /**
-     * 紧凑数字。统计面板一行里要塞下 6~7 位 token 数，原样显示会把布局挤爆，
-     * 精确值通过 title 悬浮给出。
-     */
     formatCount(value: number | null | undefined): string {
       if (value === null || value === undefined || !Number.isFinite(value))
         return '0'
       const magnitude = Math.abs(value)
-      if (magnitude >= 1_000_000_000)
-        return `${(value / 1_000_000_000).toFixed(1)}B`
-      if (magnitude >= 1_000_000)
-        return `${(value / 1_000_000).toFixed(1)}M`
+      if (magnitude >= 100_000_000)
+        return `${(value / 100_000_000).toFixed(1)} 亿`
       if (magnitude >= 10_000)
-        return `${(value / 1_000).toFixed(1)}K`
-      return String(Math.round(value))
+        return `${(value / 10_000).toFixed(1)} 万`
+      return Math.round(value).toLocaleString('zh-CN')
     },
 
     /** 命中率 null 时显示 — 而不是 0%，"没数据"和"零命中"必须能区分 */
@@ -727,15 +713,10 @@ export function initApp(Alpine: AlpineType) {
      * 面板上有三个口径，必须显式区分，否则用户看到的数字到底是哪一段的说不清：
      *   today   —— 本地时区当天
      *   allTime —— 全部记录（不受 14 天窗口限制）
-     *   window  —— 最近 14 天，趋势图与「按模型」表用（走 usageDays / usageModelRows）
+     *   window  —— 最近 7 或 14 个本地自然日，趋势图和模型表共用
      */
     usageScopeTotals(scope: 'today' | 'allTime') {
       return this.usageStats?.[scope] ?? null
-    },
-
-    /** 口径标题 —— 放在对应数据块上方 */
-    usageScopeLabel(scope: 'today' | 'allTime'): string {
-      return scope === 'today' ? 'Today' : 'All time'
     },
 
     /**
@@ -773,23 +754,16 @@ export function initApp(Alpine: AlpineType) {
       // 只有一天数据时给单个日期，`09-17 → 09-17` 是废话
       if (!lastRecordAt || lastRecordAt === firstRecordAt)
         return stamp(firstRecordAt)
-      return `${stamp(firstRecordAt)} → ${stamp(lastRecordAt)}`
+      const last = stamp(lastRecordAt)
+      const first = stamp(firstRecordAt)
+      return first === last ? first : `${first} 至 ${last}`
     },
 
-    /**
-     * 总量卡片的悬浮说明。
-     *
-     * 面板上显示的是紧凑格式（166.6M），精确值只有悬浮才给 —— 跟其他指标一样，
-     * 把 6~7 位数字铺在卡片里会把布局挤爆。顺带说清这个数包含什么：
-     * 缓存读取 + 未命中输入，也就是这段时间真正发给模型的输入量。
-     */
     usagePromptTitle(scope: 'today' | 'allTime'): string {
       const totals = this.usageScopeTotals(scope)
       if (!totals)
         return ''
-      const exact = Math.round(totals.promptTokens ?? 0).toLocaleString('en-US')
-      const range = scope === 'today' ? 'today' : 'across all recorded history'
-      return `${exact} input tokens sent ${range} — cache reads plus new tokens`
+      return `${totals.promptTokens.toLocaleString('zh-CN')} 个输入 Token，包含缓存读取、缓存写入和其他输入`
     },
 
     /**
@@ -812,26 +786,21 @@ export function initApp(Alpine: AlpineType) {
 
     /** 窗口内单日最大 prompt 规模 —— 柱状图的 100% 基准 */
     _usagePeak(): number {
-      return this.usageDays().reduce(
-        (peak: number, day: any) => Math.max(peak, (day.cacheReadTokens ?? 0) + (day.nonCachedInputTokens ?? 0)),
-        0,
-      )
+      const days: UsageSummary['byDay'] = this.usageDays()
+      return days.reduce((peak, day) => Math.max(peak, day.promptTokens), 0)
     },
 
-    usageColumnHeight(day: any): number {
+    usageHasTrend(): boolean {
+      return this._usagePeak() > 0
+    },
+
+    usageColumnHeight(day: UsageSummary['byDay'][number]): number {
       const peak = this._usagePeak()
-      if (peak <= 0)
-        return 0
-      const total = (day.cacheReadTokens ?? 0) + (day.nonCachedInputTokens ?? 0)
-      return Math.max(2, Math.round((total / peak) * 100))
+      return peak > 0 && day.promptTokens > 0 ? Math.max(2, Math.round(day.promptTokens / peak * 100)) : 0
     },
 
-    /** 柱内命中缓存部分占比（占该柱自身高度） */
-    usageCachedShare(day: any): number {
-      const total = (day.cacheReadTokens ?? 0) + (day.nonCachedInputTokens ?? 0)
-      if (total <= 0)
-        return 0
-      return Math.round(((day.cacheReadTokens ?? 0) / total) * 100)
+    usageCacheShare(day: UsageSummary['byDay'][number], cachedTokens: number): number {
+      return day.promptTokens > 0 ? Math.min(100, cachedTokens / day.promptTokens * 100) : 0
     },
 
     /** 命中率色调：低于 20% 基本说明前缀缓存没生效，值得提示 */
@@ -869,9 +838,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     setUsageHover(day: any, index: number, count: number) {
-      const center = count <= 0 ? 50 : ((index + 0.5) / count) * 100
-      // 夹在 16%~84%：提示框自身有宽度，贴边会被面板裁掉
-      const leftPercent = Math.min(84, Math.max(16, center))
+      const leftPercent = count <= 0 ? 50 : ((index + 0.5) / count) * 100
       this.usageHover = { day, leftPercent }
       this.usageTipLast = this.usageHover
     },
@@ -882,7 +849,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     usageTipStyle(): string {
-      return `left:${this._usageTipTarget?.leftPercent ?? 50}%`
+      return `--usage-tip-center:${this._usageTipTarget?.leftPercent ?? 50}%`
     },
 
     usageTipDate(): string {
@@ -893,14 +860,25 @@ export function initApp(Alpine: AlpineType) {
       const day = this._usageTipTarget?.day
       if (!day)
         return []
+      return this.usageDayRows(day)
+    },
+
+    usageDayRows(day: UsageSummary['byDay'][number]): Array<{ label: string, value: string }> {
       return [
-        { label: 'prompt', value: this.formatCount((day.cacheReadTokens ?? 0) + (day.nonCachedInputTokens ?? 0)) },
-        { label: 'cached', value: this.formatCount(day.cacheReadTokens) },
-        { label: 'new', value: this.formatCount(day.nonCachedInputTokens) },
-        { label: 'output', value: this.formatCount(day.outputTokens) },
-        { label: 'hit rate', value: this.formatPercent(day.cacheHitRate) },
-        { label: 'calls', value: String(day.calls ?? 0) },
+        { label: '输入 Token', value: this.formatCount(day.promptTokens) },
+        { label: '缓存读取', value: this.formatCount(day.cacheReadTokens) },
+        { label: '缓存写入', value: this.formatCount(day.cacheWriteTokens) },
+        { label: '其他输入', value: this.formatCount(day.nonCachedInputTokens) },
+        { label: '输出 Token', value: this.formatCount(day.outputTokens) },
+        { label: '缓存命中率', value: this.formatPercent(day.cacheHitRate) },
+        { label: '模型请求', value: this.formatCount(day.calls) },
       ]
+    },
+
+    usageDayLabel(day: UsageSummary['byDay'][number]): string {
+      const rows: Array<{ label: string, value: string }> = this.usageDayRows(day)
+      const metrics = rows.map(({ label, value }) => `${label} ${value === '—' ? '无数据' : value}`)
+      return [day.date, ...metrics].join('，')
     },
 
     /** 图表横轴范围说明 —— 14 个具体日期挤在侧边栏宽度里读不清 */
@@ -911,18 +889,7 @@ export function initApp(Alpine: AlpineType) {
       const first = String(days[0]?.date ?? '')
       const last = String(days[days.length - 1]?.date ?? '')
       const short = (value: string) => value.slice(5)
-      return `${short(first)} → ${short(last)} · ${days.length} days`
-    },
-
-    /**
-     * 标题后缀用的窗口说明。
-     *
-     * 趋势图和「按模型」表都是 14 天窗口口径，但表头原本只写 "Daily prompt tokens"
-     * 和 "By model"，看不出这两个数到底统计了多久 —— 现在上面多了「今日/累计」
-     * 两块，不写清口径就更容易被误当成同一段时间。
-     */
-    usageRangeShort(): string {
-      return `last ${this.usageStats?.windowDays ?? 14}d`
+      return first === last ? short(first) : `${short(first)} 至 ${short(last)}`
     },
 
     // ── 二次确认弹窗 ──
@@ -948,16 +915,26 @@ export function initApp(Alpine: AlpineType) {
     },
 
     requestRemoveModel(pid: string, mid: string) {
+      this.requestRemoveModels(pid, [mid])
+    },
+
+    requestRemoveModels(pid: string, modelIds: string[]) {
       const provider = this.getProviderView(pid)
-      const model = (provider.models || []).find((x: any) => x.id === mid)
+      const selected = new Set(modelIds)
+      const models: ProviderModel[] = (provider.models || []).filter((model: ProviderModel) => selected.has(model.id))
+      if (!models.length)
+        return
+      const count = models.length
+      const names = models.slice(0, 3).map(model => model.displayName || model.apiModel || model.id).join('、')
+      const remaining = count > 3 ? `等 ${count} 个模型` : ''
       this.confirmDialog = {
-        kind: 'removeModel',
-        title: 'Remove model',
-        message: `"${model?.displayName || model?.apiModel || mid}" will be removed from "${provider.name || pid}".`,
-        warning: 'Takes effect after you save this provider.',
-        confirmLabel: 'Delete',
+        kind: 'removeModels',
+        title: count === 1 ? '删除模型' : `删除 ${count} 个模型`,
+        message: `从「${provider.name || '未命名服务商'}」移除 ${names}${remaining}？`,
+        warning: '保存配置后生效，保存前可撤销更改。',
+        confirmLabel: count === 1 ? '删除' : `删除 ${count} 个模型`,
         pid,
-        mid,
+        modelIds: models.map(model => model.id),
       }
     },
 
@@ -974,8 +951,8 @@ export function initApp(Alpine: AlpineType) {
       this.confirmDialog = null
       if (dialog.kind === 'deleteProvider')
         this.deleteProvider(dialog.pid)
-      else if (dialog.kind === 'removeModel' && dialog.mid)
-        this.deleteModel(dialog.pid, dialog.mid)
+      else if (dialog.kind === 'removeModels' && dialog.modelIds)
+        this.deleteModels(dialog.pid, dialog.modelIds)
     },
 
     // ── 校验 ──
@@ -985,32 +962,32 @@ export function initApp(Alpine: AlpineType) {
       const errors: Record<string, string> = {}
 
       if (!p.name?.trim())
-        errors.name = 'Name is required'
+        errors.name = '请填写服务商名称'
       if (!isProviderType(p.type))
-        errors.type = 'Invalid protocol'
+        errors.type = '协议无效'
       if (p.baseUrl?.trim()) {
         try {
           void new URL(p.baseUrl.trim())
         }
         catch {
-          errors.baseUrl = 'Invalid URL'
+          errors.baseUrl = '服务地址格式不正确'
         }
       }
       if (!p.auth?.value?.trim())
-        errors.authValue = 'Auth value is required'
+        errors.authValue = '请填写 API 密钥或 Token'
       // Anthropic 允许 apiKey / token 两种; 其他协议只允许 apiKey
       if (this.providerUsesAnthropic(pid)) {
         if (!['apiKey', 'token'].includes(p.auth?.kind))
-          errors.authKind = 'Invalid auth kind'
+          errors.authKind = '认证方式无效'
       }
       else if (p.auth?.kind !== 'apiKey') {
-        errors.authKind = 'Only the Anthropic protocol accepts a Bearer token here'
+        errors.authKind = '只有 Anthropic 协议支持 Bearer Token 认证'
       }
 
       // name 唯一
       const dupName = all.filter((x: any) => (x.name || '').trim().toLowerCase() === (p.name || '').trim().toLowerCase()).length > 1
       if (dupName)
-        errors.name = 'Duplicate provider name'
+        errors.name = '服务商名称已存在'
 
       // model 校验
       const modelErrors: Record<string, Record<string, string>> = {}
@@ -1022,23 +999,26 @@ export function initApp(Alpine: AlpineType) {
           me.apiModel = 'API Model is required'
         if (!m.displayName?.trim())
           me.displayName = 'Display name is required'
+        const customError = this.customRequestError(pid, m)
+        if (customError)
+          me.customRequestPath = customError
         if (modelIds.has(m.id))
           me.id = 'Duplicate model id'
         modelIds.add(m.id)
         // contextTokenLimit 必填 — 影响 Cursor UI 上下文进度条
         if (m.contextTokenLimit === undefined || m.contextTokenLimit === null || m.contextTokenLimit === '') {
-          me.contextTokenLimit = 'Context limit is required'
+          me.contextTokenLimit = '请填写上下文上限'
         }
         else if (!Number.isFinite(Number(m.contextTokenLimit)) || Number(m.contextTokenLimit) <= 0 || !Number.isInteger(Number(m.contextTokenLimit))) {
-          me.contextTokenLimit = 'Must be a positive integer'
+          me.contextTokenLimit = '上下文上限须为正整数'
         }
         // maxOutputTokens — noMaxTokens 开启时跳过必填校验
         if (!m.noMaxTokens) {
           if (m.maxOutputTokens === undefined || m.maxOutputTokens === null || m.maxOutputTokens === '') {
-            me.maxOutputTokens = 'Max output is required'
+            me.maxOutputTokens = '请填写最大输出 Token'
           }
           else if (!Number.isFinite(Number(m.maxOutputTokens)) || Number(m.maxOutputTokens) <= 0 || !Number.isInteger(Number(m.maxOutputTokens))) {
-            me.maxOutputTokens = 'Must be a positive integer'
+            me.maxOutputTokens = '最大输出 Token 须为正整数'
           }
         }
         for (const f of OPTIONAL_NUM_FIELDS) {
@@ -1070,8 +1050,39 @@ export function initApp(Alpine: AlpineType) {
     },
 
     // ── UI 操作 ──
-    toggleExpand(pid: string) {
-      this.expanded[pid] = !this.expanded[pid]
+    openProvider(pid: string) {
+      this.editingProviderId = pid
+    },
+
+    cancelProviderEdit(pid: string) {
+      if (this.savingProviders[pid])
+        return
+      this.editingProviderId = ''
+      this.resetProvider(pid)
+      delete this.modelExpanded[pid]
+    },
+
+    setProviderEnabled(pid: string, enabled: boolean) {
+      const provider = this.baseProvider(pid)
+      if (!provider || this.savingProviders[pid] || (provider.enabled !== false) === enabled)
+        return
+      this.savingProviders[pid] = true
+      this.post('setProviderEnabled', { pid, enabled, requestId: uid('save') })
+    },
+
+    providerHost(baseUrl: string): string {
+      try {
+        return new URL(baseUrl).host
+      }
+      catch {
+        return baseUrl || '未填写地址'
+      }
+    },
+
+    filteredConfiguredModels(pid: string, query: string): ProviderModel[] {
+      const models: ProviderModel[] = this.getDraft(pid).models || []
+      const term = query.trim().toLowerCase()
+      return term ? models.filter(model => [model.apiModel, model.displayName].some(value => value?.toLowerCase().includes(term))) : models
     },
 
     toggleModelExpand(pid: string, mid: string) {
@@ -1109,6 +1120,8 @@ export function initApp(Alpine: AlpineType) {
       else {
         d[field] = value
       }
+      if (['baseUrl', 'auth.value', 'auth.kind', 'headers'].includes(field) && this.remoteModels[pid])
+        this.dismissRemoteModels(pid)
     },
 
     formatHeaders(pid: string): string {
@@ -1126,8 +1139,8 @@ export function initApp(Alpine: AlpineType) {
         return
       }
       try {
-        JSON.parse(trimmed)
-        this.headersInvalid[pid] = false
+        const parsed: unknown = JSON.parse(trimmed)
+        this.headersInvalid[pid] = typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)
       }
       catch {
         this.headersInvalid[pid] = true
@@ -1251,19 +1264,19 @@ export function initApp(Alpine: AlpineType) {
     addProvider() {
       const p = {
         id: uid('provider'),
-        name: 'New Provider',
+        name: '',
         type: 'anthropic',
         baseUrl: '',
         auth: { kind: 'apiKey', value: '' },
         models: [],
       }
       this.drafts[p.id] = p
-      this.expanded[p.id] = true
+      this.openProvider(p.id)
     },
 
-    addModel(pid: string) {
+    addModel(pid: string, expand = true): ProviderModel {
       const d = this.ensureDraft(pid)
-      const m = {
+      const m: ProviderModel = {
         id: uid('model'),
         apiModel: '',
         displayName: '',
@@ -1273,16 +1286,25 @@ export function initApp(Alpine: AlpineType) {
       if (!d.models)
         d.models = []
       d.models.push(m)
-      if (!this.modelExpanded[pid])
-        this.modelExpanded[pid] = {}
-      this.modelExpanded[pid][m.id] = true
+      if (expand) {
+        if (!this.modelExpanded[pid])
+          this.modelExpanded[pid] = {}
+        this.modelExpanded[pid][m.id] = true
+      }
+      return d.models[d.models.length - 1]
     },
 
-    deleteModel(pid: string, mid: string) {
-      const d = this.ensureDraft(pid)
-      d.models = (d.models || []).filter((x: any) => x.id !== mid)
-      if (this.modelExpanded[pid])
-        delete this.modelExpanded[pid][mid]
+    deleteModels(pid: string, modelIds: string[]) {
+      const removed = new Set(modelIds)
+      const models: ProviderModel[] = this.getDraft(pid).models || []
+      if (!models.some(model => removed.has(model.id)))
+        return
+      const draft = this.ensureDraft(pid)
+      draft.models = draft.models.filter((model: ProviderModel) => !removed.has(model.id))
+      for (const mid of removed) {
+        if (this.modelExpanded[pid])
+          delete this.modelExpanded[pid][mid]
+      }
     },
 
     // ── 模型拖动排序 ──
@@ -1446,12 +1468,16 @@ export function initApp(Alpine: AlpineType) {
     },
 
     resetProvider(pid: string) {
+      this.dismissRemoteModels(pid)
       delete this.drafts[pid]
-      const base = (this.state?.providers || []).find((p: any) => p.id === pid)
-      if (!base) {
-        delete this.expanded[pid]
-        delete this.modelExpanded[pid]
+      delete this.headersInvalid[pid]
+      delete this.importedModelIds[pid]
+      for (const [requestId, pending] of Object.entries(this.modelDefaultsPending) as [string, { pid: string }][]) {
+        if (pending.pid === pid)
+          delete this.modelDefaultsPending[requestId]
       }
+      if (!this.baseProvider(pid))
+        delete this.modelExpanded[pid]
     },
 
     moveProvider(pid: string, direction: number) {
@@ -1465,25 +1491,35 @@ export function initApp(Alpine: AlpineType) {
       const tmp = list[idx]
       list[idx] = list[target]
       list[target] = tmp
-      const merged = list.map((p: any) => this.materializeModelProtocols(this.drafts[p.id] ?? p))
-      this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
+      this.post('saveProviders', { providers: clone(list) })
     },
 
     deleteProvider(pid: string) {
       const remaining = (this.state?.providers || []).filter((p: any) => p.id !== pid)
-      const merged = remaining.map((p: any) => this.materializeModelProtocols(this.drafts[p.id] ?? p))
-      delete this.drafts[pid]
-      delete this.expanded[pid]
+      this.resetProvider(pid)
+      if (this.editingProviderId === pid)
+        this.editingProviderId = ''
       delete this.modelExpanded[pid]
-      this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
+      if (this.baseProvider(pid))
+        this.post('saveProviders', { providers: clone(remaining) })
     },
 
     saveProvider(pid: string) {
+      if (this.savingProviders[pid])
+        return
+      if (this.importReview(pid).pending.length) {
+        this.toast('正在补全模型参数，请稍候', 'info')
+        return
+      }
+      if (this.headersInvalid[pid]) {
+        this.toast('请修正高级连接设置中的自定义请求头', 'error')
+        return
+      }
       try {
         const p = this.getProviderView(pid)
         const v = this.validate(pid)
         if (!v.ok) {
-          const providerName = p.name || 'Provider'
+          const providerName = p.name || '未命名服务商'
           for (const [, msg] of Object.entries(v.errors))
             this.toast(`${providerName}: ${msg}`, 'error', 6000)
           for (const [mid, errs] of Object.entries(v.modelErrors) as [string, Record<string, string>][]) {
@@ -1491,7 +1527,7 @@ export function initApp(Alpine: AlpineType) {
             const modelLabel = m?.displayName || m?.apiModel || mid
             for (const [, msg] of Object.entries(errs))
               this.toast(`${providerName}: ${modelLabel} — ${msg}`, 'error', 6000)
-            this.expanded[p.id] = true
+            this.openProvider(p.id)
             if (!this.modelExpanded[p.id])
               this.modelExpanded[p.id] = {}
             this.modelExpanded[p.id][mid] = true
@@ -1518,12 +1554,12 @@ export function initApp(Alpine: AlpineType) {
         })
       }
       catch (e) {
-        this.toast(`Save failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+        this.toast(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'error')
       }
     },
 
     // ── 自动填充：用户只选择中转站模型，目录匹配在宿主中完成 ──
-    resolveModelDefaults(pid: string, mid: string) {
+    resolveModelDefaults(pid: string, mid: string, imported?: RemoteModelEntry) {
       const draft = this.ensureDraft(pid)
       const model = (draft.models || []).find((item: any) => item.id === mid)
       if (!model?.apiModel?.trim())
@@ -1532,26 +1568,34 @@ export function initApp(Alpine: AlpineType) {
         if (pending.mid === mid)
           delete this.modelDefaultsPending[requestId]
       }
-      const remote = this.remoteModels[pid]?.models?.find((item: RemoteModelEntry) => item.id === model.apiModel)
+      const remote: RemoteModelEntry | undefined = imported ?? this.remoteModels[pid]?.models?.find((item: RemoteModelEntry) => item.id === model.apiModel)
       if (remote?.catalog) {
-        this.applyCatalogEntry(pid, mid, remote.catalog)
+        this.applyCatalogEntry(pid, mid, remote.catalog, undefined, remote)
         return
       }
       const requestId = uid('defaults')
-      this.modelDefaultsPending[requestId] = { pid, mid, apiModel: model.apiModel, before: clone(model) }
+      this.modelDefaultsPending[requestId] = { pid, mid, apiModel: model.apiModel, before: clone(model), remote }
       this.post('resolveCatalogModel', { modelId: model.apiModel, requestId, displayName: remote?.displayName, ownedBy: remote?.ownedBy })
     },
 
-    applyCatalogEntry(pid: string, mid: string, entry: any, before?: Record<string, any>) {
+    applyCatalogEntry(pid: string, mid: string, entry: NonNullable<RemoteModelEntry['catalog']>, before?: Record<string, any>, remote?: RemoteModelEntry) {
       const draft = this.ensureDraft(pid)
       const model = (draft.models || []).find((item: any) => item.id === mid)
       if (!model)
         return
-      const defaults = catalogModelDefaults(entry, draft.baseUrl || '', model.apiModel)
-      const values = { thinkingLevel: undefined, thinkingBudgetTokens: undefined, ...defaults }
-      for (const [key, value] of Object.entries(values)) {
-        // 宿主异步回复期间，用户已编辑的字段优先。
-        if (before && JSON.stringify(model[key]) !== JSON.stringify(before[key]))
+      const changed = (key: string) => before && JSON.stringify(model[key]) !== JSON.stringify(before[key])
+      const thinkingFields = ['thinking', 'thinkingLevel', 'thinkingBudgetTokens', 'parameters']
+      const thinkingEdited = changed('type') || thinkingFields.some(changed)
+      const defaults = catalogModelDefaults(entry, draft.baseUrl || '', model.apiModel, {
+        contextTokenLimit: changed('contextTokenLimit') ? model.contextTokenLimit : remote?.contextTokenLimit,
+        maxOutputTokens: changed('maxOutputTokens') ? model.maxOutputTokens : remote?.maxOutputTokens,
+        type: model.customRequestPath === undefined ? undefined : this.modelProtocolType(pid, mid),
+      })
+      if (entry.contextLimit === undefined && defaults.parameters)
+        defaults.parameters = { ...model.parameters, ...defaults.parameters }
+      for (const [key, value] of Object.entries(defaults)) {
+        // Keep edits made while the catalog lookup was in flight.
+        if (changed(key) || (thinkingEdited && thinkingFields.includes(key)) || (key === 'type' && model.customRequestPath !== undefined))
           continue
         if (key === 'displayName' && model.displayName && model.displayName !== model.apiModel && model.displayName !== before?.displayName)
           continue
@@ -1563,20 +1607,62 @@ export function initApp(Alpine: AlpineType) {
     },
 
     // ── Remote Models (GET /v1/models) ──
-    fetchRemoteModels(pid: string) {
+    fetchRemoteModels(pid: string, protocol?: ProviderType): boolean {
       if (this.remoteModels[pid]?.loading)
-        return
+        return false
       const draft = this.getDraft(pid)
       if (!draft.baseUrl?.trim()) {
-        this.toast('Set the Base URL first', 'warn')
-        return
+        this.toast('请先填写服务地址', 'warn')
+        return false
       }
       if (!draft.auth?.value?.trim()) {
-        this.toast('Set the auth value first', 'warn')
-        return
+        this.toast('请先填写 API 密钥或 Token', 'warn')
+        return false
       }
-      this.remoteModels = { ...this.remoteModels, [pid]: { loading: true } }
-      this.post('fetchRemoteModels', { pid, draft: JSON.parse(JSON.stringify(draft)) })
+      if (this.headersInvalid[pid]) {
+        this.toast('请修正高级连接设置中的自定义请求头', 'warn')
+        return false
+      }
+      const requestId = uid('models')
+      this.remoteModels = { ...this.remoteModels, [pid]: { models: this.remoteModels[pid]?.models, loading: true, requestId } }
+      this.post('fetchRemoteModels', { pid, requestId, protocol, draft: clone(draft) })
+      return true
+    },
+
+    canApplyProviderPreset(pid: string): boolean {
+      const draft = this.drafts[pid]
+      return !!draft && !this.baseProvider(pid) && !draft.baseUrl?.trim() && !draft.auth?.value && !draft.models?.length && !draft.headers && !this.headersInvalid[pid]
+    },
+
+    applyProviderPreset(pid: string, presetId: string): boolean {
+      const preset = PROVIDER_PRESETS.find(item => item.id === presetId)
+      if (!preset || !this.canApplyProviderPreset(pid))
+        return false
+      const draft = this.drafts[pid]
+      draft.name ||= preset.name
+      draft.type = preset.type
+      draft.auth.kind = 'apiKey'
+      this.updateField(pid, 'baseUrl', preset.baseUrl)
+      return true
+    },
+
+    toggleVisibleModels(visible: string[], selected: string[]): string[] {
+      const set = new Set(selected)
+      if (visible.every(id => set.has(id))) {
+        for (const id of visible)
+          set.delete(id)
+      }
+      else {
+        for (const id of visible)
+          set.add(id)
+      }
+      return [...set]
+    },
+
+    filteredRemoteModels(pid: string, query: string): RemoteModelEntry[] {
+      const models: RemoteModelEntry[] = this.remoteModels[pid]?.models ?? []
+      const term = query.trim().toLowerCase()
+      return term ? models.filter(model => model.id.toLowerCase().includes(term) || model.displayName?.toLowerCase().includes(term)) : models
     },
 
     dismissRemoteModels(pid: string) {
@@ -1584,24 +1670,62 @@ export function initApp(Alpine: AlpineType) {
       this.remoteModels = rest
     },
 
-    applyRemoteModel(pid: string, rm: RemoteModelEntry) {
-      this.addModel(pid)
-      const models = this.ensureDraft(pid).models || []
-      const model = models[models.length - 1]
-      if (!model)
-        return
+    applyRemoteModel(pid: string, rm: RemoteModelEntry): ProviderModel {
+      const model = this.addModel(pid, false) as ProviderModel
       model.apiModel = rm.id
       model.displayName = rm.displayName || rm.id
-      if (rm.catalog) {
-        this.applyCatalogEntry(pid, model.id, rm.catalog)
+      model.contextTokenLimit = rm.contextTokenLimit
+      model.maxOutputTokens = rm.maxOutputTokens
+      this.resolveModelDefaults(pid, model.id, rm)
+      return model
+    },
+
+    configuredModelIds(pid: string): Set<string> {
+      const models: ProviderModel[] = this.getDraft(pid).models || []
+      return new Set(models.map(model => model.apiModel?.trim()).filter(Boolean))
+    },
+
+    importModels(pid: string, ids: string[]) {
+      const listed: RemoteModelEntry[] = this.remoteModels[pid]?.models ?? []
+      const available = new Map(listed.map(model => [model.id, model]))
+      const configured: Set<string> = this.configuredModelIds(pid)
+      const added: string[] = []
+      let skipped = 0
+      for (const input of ids) {
+        const id = input.trim()
+        if (!id)
+          continue
+        if (configured.has(id)) {
+          skipped++
+          continue
+        }
+        const remote = available.get(id) ?? { id, displayName: id, ownedBy: '', createdAt: 0 }
+        const model: ProviderModel = this.applyRemoteModel(pid, remote)
+        configured.add(id)
+        added.push(model.id)
       }
-      else {
-        if (rm.contextTokenLimit !== undefined)
-          model.contextTokenLimit = rm.contextTokenLimit
-        if (rm.maxOutputTokens !== undefined)
-          model.maxOutputTokens = rm.maxOutputTokens
-        this.resolveModelDefaults(pid, model.id)
-      }
+      if (added.length)
+        this.importedModelIds[pid] = [...(this.importedModelIds[pid] ?? []), ...added]
+      const result = [`已加入 ${added.length} 个模型`, ...(skipped ? [`跳过 ${skipped} 个已添加或重复的 ID`] : [])]
+      this.toast(result.join('，'), 'info')
+    },
+
+    importReview(pid: string) {
+      const ids = new Set<string>(this.importedModelIds[pid] ?? [])
+      const allModels: ProviderModel[] = this.getDraft(pid).models ?? []
+      const models = allModels.filter(model => ids.has(model.id))
+      const lookups = Object.values(this.modelDefaultsPending) as Array<{ pid: string, mid: string, apiModel: string }>
+      const pending = models.filter(model => lookups.some(lookup => lookup.pid === pid && lookup.mid === model.id && lookup.apiModel === model.apiModel))
+      const errors: Record<string, Record<string, string>> = models.length ? this.validate(pid).modelErrors : {}
+      const needs = models.filter(model => !pending.includes(model) && errors[model.id])
+      const ready = models.filter(model => !pending.includes(model) && !errors[model.id])
+      return { models, pending, needs, ready }
+    },
+
+    openImportedModel(pid: string, mid: string) {
+      this.openProvider(pid)
+      this.modelExpanded[pid] ??= {}
+      this.modelExpanded[pid][mid] = true
     },
 
     /**
@@ -1631,7 +1755,9 @@ export function initApp(Alpine: AlpineType) {
       return this.validate(pid).modelErrors[mid] || {}
     },
 
-    fmtCtx(n: number): string {
+    fmtCtx(n?: number): string {
+      if (n === undefined)
+        return '—'
       if (n >= 1_000_000) {
         const v = n / 1_000_000
         return `${Number.isInteger(v) ? v : v.toFixed(1)}M`
@@ -1690,13 +1816,17 @@ export function initApp(Alpine: AlpineType) {
       for (const pid of targetIds)
         delete s.savingProviders[pid]
       if (!msg.ok) {
-        s.toast(`Save failed: ${msg.error || 'unknown error'}`, 'error', 6000)
+        s.toast(`保存失败：${msg.error || '未知错误'}`, 'error', 6000)
       }
       else {
         for (const pid of targetIds) {
           const sent = pending?.snapshots?.[pid]
           const current = s.drafts[pid]
           const base = (s.state?.providers || []).find((p: any) => p.id === pid)
+          if (sent && s.importedModelIds[pid]) {
+            const saved = new Set(((sent.models ?? []) as ProviderModel[]).map(model => model.id))
+            s.importedModelIds[pid] = (s.importedModelIds[pid] as string[]).filter(id => !saved.has(id))
+          }
           if (sent && current && providersEqual(current, sent))
             delete s.drafts[pid]
           else if (sent && !current && base && providersEqual(base, sent))
@@ -1704,16 +1834,19 @@ export function initApp(Alpine: AlpineType) {
           else if (!sent && base && current && providersEqual(base, current))
             delete s.drafts[pid]
         }
-        s.toast('Providers saved.', 'info')
+        if (pending && targetIds.includes(s.editingProviderId) && !s.isDirty(s.editingProviderId))
+          s.editingProviderId = ''
+        s.toast('配置已保存', 'info')
       }
       if (requestId)
         delete s.saveSnapshots[requestId]
     }
     else if (msg?.type === 'remoteModelsResult') {
       const pid = msg.pid as string
+      if (typeof msg.requestId !== 'string' || s.remoteModels[pid]?.requestId !== msg.requestId)
+        return
       if (msg.error) {
-        s.remoteModels = { ...s.remoteModels, [pid]: { loading: false, error: msg.error } }
-        s.toast(`Failed to fetch models: ${msg.error}`, 'error', 6000)
+        s.remoteModels = { ...s.remoteModels, [pid]: { models: s.remoteModels[pid]?.models, loading: false, error: `获取模型失败：${msg.error}` } }
       }
       else {
         s.remoteModels = { ...s.remoteModels, [pid]: { loading: false, models: msg.models || [] } }
@@ -1732,21 +1865,21 @@ export function initApp(Alpine: AlpineType) {
       if (!model || model.apiModel !== pending.apiModel)
         return
       if (msg.entry)
-        s.applyCatalogEntry(pending.pid, pending.mid, msg.entry, pending.before)
-      else if (!model.contextTokenLimit)
+        s.applyCatalogEntry(pending.pid, pending.mid, msg.entry, pending.before, pending.remote)
+      else if (!model.contextTokenLimit && !s.importedModelIds[pending.pid]?.includes(model.id))
         s.toast('目录暂无此模型的参数，请填写供应商标注的上下文上限。', 'warn')
     }
     else if (msg?.type === 'searchTestResult') {
       s.searchTesting = false
       s.searchTestResult = msg.ok
-        ? { level: 'ok', text: msg.text || 'Success' }
-        : { level: 'error', text: msg.text || 'Failed' }
+        ? { level: 'ok', text: msg.text || '连接成功' }
+        : { level: 'error', text: msg.text ? `测试失败：${msg.text}` : '测试失败' }
     }
     else if (msg?.type === 'fetchTestResult') {
       s.fetchTesting = false
       s.fetchTestResult = msg.ok
-        ? { level: 'ok', text: msg.text || 'Success' }
-        : { level: 'error', text: msg.text || 'Failed' }
+        ? { level: 'ok', text: msg.text || '连接成功' }
+        : { level: 'error', text: msg.text ? `测试失败：${msg.text}` : '测试失败' }
     }
     else if (msg?.type === 'modelTestResult') {
       const mid = msg.mid as string
@@ -1778,6 +1911,9 @@ export function initApp(Alpine: AlpineType) {
       }
     }
     else if (msg?.type === 'usageStats') {
+      if (!s.usageRequestId || msg.requestId !== s.usageRequestId)
+        return
+      s.usageRequestId = ''
       s.usageLoading = false
       if (msg.error) {
         s.usageError = String(msg.error)

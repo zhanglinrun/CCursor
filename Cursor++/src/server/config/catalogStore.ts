@@ -1,5 +1,5 @@
 /** models.dev metadata is only used to prefill explicitly selected models, never saved providers. */
-import type { CatalogEntry } from '../../shared/catalogModelDefaults'
+import type { CatalogEntry, CatalogMatch } from '../../shared/catalogModelDefaults'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { mkdir, open, rename, rm } from 'node:fs/promises'
@@ -97,6 +97,7 @@ export function parseCatalog(raw: unknown): CatalogEntry[] {
         canonicalId: text(model.canonical_model_id),
         description: text(model.description),
         reasoningLevels: [...new Set(levels)],
+        usesThinkingBudget: reasoningOptions.some(option => record(option)?.type === 'budget_tokens'),
         contextLevels,
         supportsFast: !!record(record(record(model.experimental)?.modes)?.fast),
         hasTextOutput: !Array.isArray(modalities?.output) || modalities.output.includes('text'),
@@ -194,7 +195,7 @@ export class CatalogStore {
     return entries.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '')).slice(0, count)
   }
 
-  match(modelId: string, displayName = '', ownedBy = ''): CatalogEntry | undefined {
+  match(modelId: string, displayName = '', ownedBy = ''): CatalogMatch | undefined {
     this.load()
     return matchCatalogModel(this.entries, modelId, displayName, ownedBy)
   }
@@ -346,6 +347,6 @@ export function resetCatalogCacheForTests(): void {
   store = undefined
 }
 
-export function resolveCatalogModel(modelId: string, displayName = '', ownedBy = ''): CatalogEntry | undefined {
+export function resolveCatalogModel(modelId: string, displayName = '', ownedBy = ''): CatalogMatch | undefined {
   return getStore().match(modelId, displayName, ownedBy)
 }

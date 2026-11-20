@@ -198,6 +198,34 @@ function parseUrl(value: string): URL | null {
   }
 }
 
+export function isCustomRequestType(type: ProviderType): type is Exclude<ProviderType, 'gemini'> {
+  return type === 'anthropic' || type === 'openai-chat' || type === 'openai-responses'
+}
+
+/** Resolve an exact request path against the provider's origin. */
+export function customRequestUrl(baseUrl: string | undefined, path: unknown): string | undefined {
+  const forbiddenCharacters = /[\s#\\\p{Cc}]/u
+  if (typeof baseUrl !== 'string' || forbiddenCharacters.test(baseUrl))
+    return undefined
+  const authority = /^https?:\/\/([^/?]+)/i.exec(baseUrl)?.[1]
+  if (!authority || authority.includes('@'))
+    return undefined
+
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')
+    || forbiddenCharacters.test(path) || /%(?![\da-f]{2})/i.test(path)) {
+    return undefined
+  }
+
+  const base = parseUrl(baseUrl)
+  if (!base)
+    return undefined
+
+  const expected = `${base.origin}${path}`
+  // Reject inputs that URL parsing would normalize before sending the request.
+  const resolved = parseUrl(expected)
+  return resolved?.href === expected ? expected : undefined
+}
+
 /**
  * 最终会被请求的完整 URL。
  *
@@ -292,6 +320,9 @@ export function suggestProtocol(baseUrl: string, apiModel = ''): ProtocolSuggest
   }
   if (host === 'api.openai.com' || host.endsWith('.openai.com')) {
     return { type: 'openai-responses', reason: 'this address is the official OpenAI endpoint; the Responses API is recommended' }
+  }
+  if (host === 'api.deepseek.com' || host === 'openrouter.ai') {
+    return { type: 'openai-chat', reason: 'this address serves OpenAI-compatible Chat Completions' }
   }
 
   // ── 退而用模型名：只认前缀特征极强的那些 ──

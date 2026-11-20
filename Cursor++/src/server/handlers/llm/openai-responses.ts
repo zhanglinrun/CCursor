@@ -27,14 +27,14 @@ export class OpenAIResponsesProvider implements LLMProvider {
   readonly name = 'openai-responses'
   private client: OpenAI
 
-  constructor(entry: ProviderEntry) {
+  constructor(entry: ProviderEntry, requestUrl?: string) {
     const opts: ConstructorParameters<typeof OpenAI>[0] = {
       apiKey: entry.auth.value,
     }
     if (entry.baseUrl) {
       opts.baseURL = entry.baseUrl
     }
-    opts.fetch = createProxiedFetch(entry.proxyUrl)
+    opts.fetch = createProxiedFetch(entry.proxyUrl, requestUrl)
     const headers = buildDefaultHeaders('openai-responses', entry.headers)
     if (headers) {
       opts.defaultHeaders = headers

@@ -38,6 +38,7 @@ export interface ResolvedModel extends ModelContextMetadata {
    */
   provider: ProviderType
   providerEntry: ProviderEntry | null
+  customRequestPath?: string
   apiModel: string
   thinking: boolean
   thinkingLevel?: ThinkingLevel
@@ -72,6 +73,7 @@ export function resolveModel(modelId: string): ResolvedModel {
   return {
     provider: effectiveType,
     providerEntry: hit.provider,
+    ...(hit.model.customRequestPath !== undefined ? { customRequestPath: hit.model.customRequestPath } : {}),
     apiModel: hit.model.apiModel,
     thinking: hit.model.thinking,
     thinkingLevel: hit.model.thinkingLevel,

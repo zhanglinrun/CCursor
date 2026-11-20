@@ -30,24 +30,20 @@
 **窗口与远程兼容**
 
 - **Agent Window (glass) 支持** — Agent 窗口的 ConnectRPC 在 renderer 层直发本地 BYOK 服务，官方 transport 作为回退。
-- **Remote SSH / WSL / Dev Container** — 拓扑守卫保证 BYOK 开启时远程窗口的 agent host 走 Cursor legacy 路径（远程 agent host 够不到你本机的 BYOK 服务），检测到错配时提示重新加载窗口。
+- **Remote SSH / WSL / Dev Container** — 拓扑守卫让远程窗口在 BYOK 开启时走 Cursor legacy 路径，以便访问本地服务。
 - **路由时效** — 路由规则在每次判定前按需从 `routes.json` 重载，BYOK 切换后的首批请求即用新规则。
 
 ## 安装与更新
 
-> 需要已安装 Cursor。**安装或更新前完全退出所有 Cursor 窗口。**打包脚本支持 Windows/macOS/Linux，维护目标为 Windows Cursor 3.27.x。
+**用 Cursor 的「从 VSIX 安装」安装 Cursor++。** 标准扩展和 `~/.ccursor` 里的服务商、模型配置会保留在用户目录中。完整 ZIP 提供独立 CLI。
 
-从本仓库获取 CLI（或自行构建，见下），先跑 `check`，报告不匹配就停止：
+首次启用自有模型或升级 Cursor 后，在普通编辑器窗口打开 Cursor++，点击「重新注入」，再确认重启。扩展会等待 Cursor 正常退出，通过兼容性预检后注入路由，并重新打开 Cursor。已有补丁时，也可以从面板「高级设置」或命令面板打开这个入口。
 
-```sh
-node installer/dist/cli.cjs check      # 只读预检
-node installer/dist/cli.cjs install    # 首次安装
-node installer/dist/cli.cjs update     # 已安装时更新
-node installer/dist/cli.cjs status     # 安装状态
-node installer/dist/cli.cjs uninstall  # 恢复 Cursor 原始文件
-```
+独立维护时，可以在 Cursor 退出后使用 `node installer/dist/cli.cjs check --routing-only` 做只读预检，或用 `node installer/dist/cli.cjs inject` 恢复路由。
 
-安装器会补丁 Cursor 程序文件（renderer hook、HTTP 路由、agent-host 守卫）并安装 Cursor++ 扩展；仅拖入 VSIX 不够。面板更新只替换扩展本体——涉及 `installer/src/` 的改动需要重跑安装器。Cursor 自身升级后，重新 `check` 再 `update`。
+旧版内置安装仍可使用 `check`、`install`、`update`、`status` 和 `uninstall`。从旧方式迁移时，先在原 Cursor 版本上使用对应安装器执行 `uninstall`，再从 VSIX 安装并执行 `inject`。服务商、模型和路由配置继续从 `~/.ccursor` 读取。
+标准 VSIX 的设置面板从普通编辑器窗口打开。
+
 
 最新发布：<https://github.com/zhanglinrun/CCursor/releases/latest> ——不要用 `npx @cometix/ccursor`，那会安装上游版本并覆盖本分支的增强。
 

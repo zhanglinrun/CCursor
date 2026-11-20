@@ -30,24 +30,20 @@ Current version **0.1.5** · Maintained at **zhanglinrun/CCursor** · License AG
 **Window & remote compatibility**
 
 - **Agent Window (glass) support** — ConnectRPC calls in the Agent window are routed at the renderer level to the local BYOK server, with the official transport kept as fallback.
-- **Remote SSH / WSL / Dev Containers** — a topology guard keeps the agent host on Cursor's legacy path in remote windows when BYOK is on (the remote agent host cannot reach your local server), and the extension prompts you to reload when a mismatch is detected.
+- **Remote SSH / WSL / Dev Containers** — a topology guard keeps the agent host on Cursor's legacy path in remote windows when BYOK is on, so it can reach the local service.
 - **Route freshness** — routing rules reload on demand from `routes.json` before each decision, so the first requests after a BYOK toggle already use the new rules.
 
 ## Install and update
 
-> Requires an installed Cursor. **Fully exit all Cursor windows before installing or updating.** Windows, macOS and Linux are supported by the packaging script; the maintained preflight target is Windows Cursor 3.27.x.
+**Install Cursor++ using Cursor’s “Install from VSIX” command.** The user-installed extension and your existing `~/.ccursor` configuration persist across Cursor upgrades. The full ZIP includes the standalone CLI.
 
-Download the CLI from this repository (or build it yourself, see below), then run `check` first — stop if it reports a mismatch:
+Before first using BYOK or after a Cursor upgrade, open Cursor++ in a regular editor window, click **Reinject** (重新注入), and confirm the restart. The extension waits for Cursor to quit, checks compatibility, applies the routing patches, and reopens Cursor. The same action is available in Advanced Settings or the command palette.
 
-```sh
-node installer/dist/cli.cjs check      # read-only preflight
-node installer/dist/cli.cjs install    # first installation
-node installer/dist/cli.cjs update     # upgrade an existing installation
-node installer/dist/cli.cjs status     # installation status
-node installer/dist/cli.cjs uninstall  # restore Cursor's original files
-```
+For standalone maintenance, close Cursor and run `node installer/dist/cli.cjs check --routing-only` for read-only preflight or `node installer/dist/cli.cjs inject` to restore the routes.
 
-The installer patches Cursor's application files (renderer hook, HTTP router, agent-host guards) and installs the Cursor++ extension; dropping the VSIX into Cursor alone is not enough. Panel updates replace the extension body only — changes that involve `installer/src/` require re-running the installer. After Cursor upgrades itself, re-run `check` and `update`.
+The legacy bundled installation still supports `check`, `install`, `update`, `status`, and `uninstall`. To migrate, run `uninstall` with the installer and Cursor version matching the existing bundled installation, then install the VSIX and run `inject`. Both installation methods read providers, models, and routes from `~/.ccursor`.
+Open the standard VSIX settings panel from a regular editor window.
+
 
 Download the latest release: <https://github.com/zhanglinrun/CCursor/releases/latest> — do not use `npx @cometix/ccursor`, which installs the upstream distribution and replaces this fork.
 

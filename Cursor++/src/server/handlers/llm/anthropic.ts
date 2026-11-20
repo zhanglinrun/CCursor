@@ -46,7 +46,7 @@ export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic'
   private client: Anthropic
 
-  constructor(entry: ProviderEntry) {
+  constructor(entry: ProviderEntry, requestUrl?: string) {
     const opts: ConstructorParameters<typeof Anthropic>[0] = {}
     if (entry.baseUrl) {
       opts.baseURL = entry.baseUrl
@@ -59,7 +59,7 @@ export class AnthropicProvider implements LLMProvider {
       opts.apiKey = entry.auth.value
     }
 
-    opts.fetch = createProxiedFetch(entry.proxyUrl)
+    opts.fetch = createProxiedFetch(entry.proxyUrl, requestUrl)
 
     const headers = buildDefaultHeaders('anthropic', entry.headers)
     if (headers) {

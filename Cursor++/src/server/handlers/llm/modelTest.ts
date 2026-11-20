@@ -19,13 +19,9 @@ import type { ModelTestErrorKind, ModelTestResult, ProtocolAttempt, ProtocolDete
  */
 import type { ProviderEntry, ProviderModel, ProviderType } from '../../data/defaults'
 import type { LLMProvider, LLMStreamEvent, LLMStreamRequest } from './types'
-import { buildProviderBaseUrl } from '../../../shared/providerProtocol'
 import { effectiveProviderType, PROVIDER_TYPES } from '../../data/defaults'
 import { countTokens } from '../agent/tokenCounter'
-import { AnthropicProvider } from './anthropic'
-import { GeminiProvider } from './gemini'
-import { OpenAIChatProvider } from './openai-chat'
-import { OpenAIResponsesProvider } from './openai-responses'
+import { createProviderClient, resolveCustomRequestUrl } from './providerClient'
 
 export const MODEL_TEST_PROMPT
   = 'Output the numbers 1 through 120 separated by a single space. No commas, no newlines, no explanation.'
@@ -36,15 +32,6 @@ export const MODEL_TEST_TIMEOUT_MS = 45_000
 const IDLE_POLL_MS = 250
 
 const IDLE = Symbol('idle')
-
-function createProvider(entry: ProviderEntry): LLMProvider {
-  switch (entry.type) {
-    case 'anthropic': return new AnthropicProvider(entry)
-    case 'openai-chat': return new OpenAIChatProvider(entry)
-    case 'openai-responses': return new OpenAIResponsesProvider(entry)
-    case 'gemini': return new GeminiProvider(entry)
-  }
-}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error)
@@ -145,14 +132,11 @@ export async function runModelTest(
   // 协议取"模型生效值"而不是 entry.type —— 否则一个挂在中转站下的 gpt 模型
   // 点 Test 时，测的其实是中转站的默认协议路径，测不过还得先存一次盘。
   const type = options.overrideType ?? effectiveProviderType(entry, model)
-  const effectiveEntry: ProviderEntry = {
-    ...entry,
-    type,
-    baseUrl: buildProviderBaseUrl(type, entry.baseUrl),
-  }
+  const customRequestPath = options.overrideType === undefined ? model.customRequestPath : undefined
   let provider: LLMProvider
   try {
-    provider = createProvider(effectiveEntry)
+    const requestUrl = resolveCustomRequestUrl(type, entry.baseUrl, customRequestPath)
+    provider = createProviderClient(entry, type, requestUrl)
   }
   catch (error) {
     return { status: 'error', errorKind: 'protocol', message: errorMessage(error), durationMs: elapsed() }

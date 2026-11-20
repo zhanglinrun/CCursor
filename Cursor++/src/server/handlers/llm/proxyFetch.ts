@@ -73,7 +73,8 @@ function getCaCerts(): string[] {
  * - proxyUrl 非空: undici fetch + ProxyAgent (走指定代理)
  * - proxyUrl 为空: undici fetch + Agent (直连, 不走任何代理)
  */
-export function createProxiedFetch(proxyUrl: string | undefined): typeof globalThis.fetch {
+export function createProxiedFetch(proxyUrl: string | undefined, requestUrl?: string): typeof globalThis.fetch {
+  let fetch = undiciFetch as unknown as typeof globalThis.fetch
   if (proxyUrl) {
     const ca = getCaCerts()
     const dispatcher = new ProxyAgent({
@@ -81,9 +82,10 @@ export function createProxiedFetch(proxyUrl: string | undefined): typeof globalT
       requestTls: { ca },
     })
     logger.info({ proxyUrl, caCount: ca.length }, '[PROXY] LLM fetch via proxy')
-    return ((input: any, init?: any) =>
+    fetch = ((input: any, init?: any) =>
       undiciFetch(input, { ...init, dispatcher })) as unknown as typeof globalThis.fetch
   }
 
-  return undiciFetch as unknown as typeof globalThis.fetch
+  // The SDKs pass the URL separately from the method, headers, body and signal.
+  return requestUrl === undefined ? fetch : (_input, init) => fetch(requestUrl, init)
 }
