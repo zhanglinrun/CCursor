@@ -67,6 +67,10 @@ const BACKUP_DIR = join(homedir(), '.ccursor', 'backups')
 /** 备份保留份数（每份约 33MB，留最近几次够回滚即可） */
 const BACKUP_KEEP = 3
 
+/** 扩展标识与用户级扩展目录 —— Cursor 原生「从 VSIX 安装」把扩展放在这里 */
+const EXTENSION_ID = 'cometix-space.cursor2plus'
+const USER_EXTENSIONS_DIR = join(homedir(), '.cursor', 'extensions')
+
 /** 本地构建的 VSIX 必须带齐这些文件，缺任何一个都会让对应平台装不上 */
 const REQUIRED_ARTIFACTS = [
   'extension.js',
@@ -214,6 +218,77 @@ function runTool(toolName, args, options = {}) {
 
 // ── 版本号处理 ──
 
+/**
+ * 标准安装（Cursor 原生「从 VSIX 安装」）的扩展目录。
+ *
+ * 旧形态把扩展塞进 Cursor 程序目录（resources/app/extensions/cursor2plus），
+ * 升级 Cursor 就被带走；新形态落在 ~/.cursor/extensions 的独立目录里。
+ * 同名多份时取版本号最大的那份，与实际被加载的那份一致。
+ */
+function resolveUserExtensionDir() {
+  if (!existsSync(USER_EXTENSIONS_DIR))
+    return null
+
+  const candidates = readdirSync(USER_EXTENSIONS_DIR, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name.startsWith(EXTENSION_ID))
+    .map(entry => join(USER_EXTENSIONS_DIR, entry.name))
+    .filter(dir => existsSync(join(dir, 'package.json')))
+
+  if (candidates.length === 0)
+    return null
+
+  const partsOf = (dir) => {
+    try {
+      return readPackageVersion(dir).split('.').map(Number)
+    }
+    catch {
+      return [0, 0, 0]
+    }
+  }
+
+  return candidates.sort((left, right) => {
+    const a = partsOf(left)
+    const b = partsOf(right)
+    for (let i = 0; i < 3; i++) {
+      if (a[i] !== b[i])
+        return b[i] - a[i]
+    }
+    return 0
+  })[0]
+}
+
+/**
+ * 就地同步 extensions.json 里的版本号。
+ *
+ * 目录名保持不变（重命名正在使用的目录在 Windows 上会撞占用），Cursor 显示的版本
+ * 取自 package.json，这里只是让登记表别落后。没有登记项同样没问题：目录扫描仍然
+ * 会把扩展算作已安装。
+ */
+function updateExtensionRegistry(extensionDir, version) {
+  const registryPath = join(dirname(extensionDir), 'extensions.json')
+  if (!existsSync(registryPath))
+    return false
+
+  let entries
+  try {
+    entries = JSON.parse(readFileSync(registryPath, 'utf8'))
+  }
+  catch {
+    return false
+  }
+  if (!Array.isArray(entries))
+    return false
+
+  const entry = entries.find(item => item?.identifier?.id === EXTENSION_ID)
+  if (!entry)
+    return false
+
+  entry.version = version
+  entry.metadata = { ...(entry.metadata ?? {}), installedTimestamp: Date.now() }
+  writeFileSync(registryPath, JSON.stringify(entries))
+  return true
+}
+
 function readPackageVersion(dir) {
   return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version
 }
@@ -308,6 +383,7 @@ function preflight() {
         + '\n  （只想发布、不更新本地的话，加 --no-install）')
     }
     const installed = existsSync(join(cursorLocation.paths.cursor2plusDir, 'package.json'))
+      || Boolean(resolveUserExtensionDir())
     info(`Cursor ${cursorLocation.paths.cursorVersion}：${cursorAppRoot}`)
     info(`本地扩展：${installed ? '已安装，将被覆盖' : '未安装，将新建'}`)
   }
@@ -523,8 +599,17 @@ function installLocal(vsixPath, version) {
     fail(`找不到 Cursor 安装目录。\n${formatDiagnostic(diagnostic)}`)
   }
 
-  const targetDir = paths.cursor2plusDir
-  info(`目标：${targetDir}`)
+  // 两种形态并存：把扩展塞进 Cursor 程序目录的旧捆绑安装，与 Cursor 原生
+  // 「从 VSIX 安装」的用户级安装。跟着当前形态走 —— 否则会把刚迁走的扩展
+  // 又塞回程序目录，等于回退安装方式。
+  const bundledDir = paths.cursor2plusDir
+  const standardDir = resolveUserExtensionDir()
+  const targetDir = existsSync(join(bundledDir, 'package.json')) ? bundledDir : standardDir
+  if (!targetDir) {
+    fail('找不到本机的 Cursor++ 扩展目录。\n'
+      + '  请先用 Cursor 的「从 VSIX 安装」装一次，再重跑本命令。')
+  }
+  info(`目标：${targetDir}（${targetDir === bundledDir ? '捆绑安装' : '用户级 VSIX 安装'}）`)
 
   // 覆盖的文件在扩展重启前不会生效（JS 已 require 进内存），所以只提示不阻断。
   // 个别被占用的文件会在替换步骤里单独跳过，并在结尾汇总报错 —— 见那里的说明。
@@ -624,6 +709,11 @@ function installLocal(vsixPath, version) {
     const installedVersion = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf8')).version
     if (installedVersion !== version)
       fail(`版本不符：期望 ${version}，实际写入 ${installedVersion}`)
+
+    // 用户级安装还要让扩展登记表跟上版本号（目录扫描依旧生效，但 UI 与更新检查
+    // 读的是登记项）。捆绑安装由 installer 自己维护，不走这里。
+    if (targetDir !== bundledDir && updateExtensionRegistry(targetDir, installedVersion))
+      info('已同步 extensions.json 的版本号')
 
     ok(`本地扩展已更新到 v${installedVersion}`
       + `（写入 ${writtenFiles.length} 个，内容一致跳过 ${unchangedFiles.length} 个`
