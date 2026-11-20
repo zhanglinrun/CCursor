@@ -8,6 +8,14 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.5 — 会话兼容、请求取消与模型目录自动刷新
+
+- 使用 Cursor 兼容的会话格式写入客户端，保留工具结果和附图。旧会话在下一次 BYOK 请求中尝试迁移，客户端确认写入后才替换引用。压缩写入未获确认时保留原历史。
+- 停止生成或断开会话时，将取消信号传到 Anthropic、OpenAI Chat / Responses 及 Gemini。Responses 保留未完成原因和服务商报告的用量。
+- 用户插件查询恢复走 Cursor 官方路由，升级时移除旧路由条目。无路径且缺少来源标记的全局规则归为用户规则。
+- 网关 HTML 错误显示为简短提示，可识别的临时网关挑战保留重试入口。`BidiAppend` 支持旧版 hex 和新版二进制载荷，过滤空消息与无效载荷。
+- 面板显示或获取供应商模型时，后台刷新超过一小时的 models.dev 目录。获取模型直接读取供应商当前列表，可用该接口返回的有效上下文和输出上限填充新模型。
+
 ## 0.1.4 — 兼容 Cursor 3.29+ 的 BidiAppend `data_binary` 消息体
 
 - 修复 Cursor 3.29 起 Agent 对话必然失败的 `[internal] Protocol error`：客户端把 Agent 消息体放进 `aiserver.v1.BidiAppendRequest` 的 bytes 字段 `data_binary`（field 4），而 `data`（field 1，string）留空。服务端只读 `data`，于是每次 `BidiAppend` 都是 `hasData:false`、消息被丢弃，`RunSSE` 在 `waitForMessage` 上永远等不到首条消息（表现为界面停在 Planning next moves，客户端最终抛可重试的协议错误）。

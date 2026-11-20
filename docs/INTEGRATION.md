@@ -1,6 +1,6 @@
 # 整合与维护记录
 
-本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前版本为 0.1.4。
+本分支以 CometixSpace/CCursor `fcac85d`（0.0.15）为基线，维护目标是自用 BYOK、Remote SSH 和新版 Cursor 的兼容性。当前版本为 0.1.5。
 
 ## 来源
 
