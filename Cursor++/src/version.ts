@@ -3,10 +3,10 @@ import { version as PACKAGE_VERSION } from '../package.json'
 export const EXTENSION_VERSION = PACKAGE_VERSION
 
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+  const pa = a.trim().replace(/^v/i, '').split('.').map(Number)
+  const pb = b.trim().replace(/^v/i, '').split('.').map(Number)
 
-  if (pa.some(part => !Number.isFinite(part)) || pb.some(part => !Number.isFinite(part)))
+  if (pa.length === 0 || pb.length === 0 || pa.some(part => !Number.isFinite(part)) || pb.some(part => !Number.isFinite(part)))
     return 0
 
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {

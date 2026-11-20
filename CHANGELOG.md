@@ -8,6 +8,10 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.9 — 修复扩展更新检查始终误判「已是最新版本」
+
+- 修复「检查扩展更新」与后台自动更新检查始终把 GitHub Release（`v0.1.8` 等带 `v` 前缀的 tag）误判为已是最新版本的问题：`compareVersions` 现在自动去除前导 `v` 前缀，且 `update-check.ts` 对比前先归一化版本号；同时补全更新失败提示的中文文案。
+
 ## 0.1.8 — 修复 Agent Host HTTP/2 协议错误（`ERR_HTTP2_ERROR`）
 
 - 修复 Cursor 3.31+（以及刚从官方模式切回 BYOK 时）发送消息报 `Server error` / `ConnectError: [internal] Protocol error (ERR_HTTP2_ERROR, errno: -505)` 的问题：

@@ -334,7 +334,7 @@ export async function checkForUpdatesManually(
     }
   }
 
-  if (compareVersions(latest.version, current) <= 0) {
+  if (compareVersions(normalizeVersion(latest.version), current) <= 0) {
     log?.(`[UPDATE] manual check: up to date (current=${current}, latest=${latest.version})`)
     return { status: 'up-to-date', message: `已是最新版本（${current}）。` }
   }
@@ -345,7 +345,7 @@ export async function checkForUpdatesManually(
     onProgress?.('installing', normalizeVersion(latest.version))
     const outcome = await installLatest(latest, context, log)
     if (!outcome.ok) {
-      return { status: 'failed', message: `Update to ${latest.version} failed: ${outcome.error}` }
+      return { status: 'failed', message: `更新至 ${latest.version} 失败：${outcome.error}` }
     }
     return {
       status: 'updated',
@@ -365,7 +365,7 @@ async function checkOnce(state: vscode.Memento, context: vscode.ExtensionContext
 
   state.update(STATE_KEY_LAST_CHECK, Date.now())
 
-  if (compareVersions(latest.version, current) <= 0) {
+  if (compareVersions(normalizeVersion(latest.version), current) <= 0) {
     log?.(`[UPDATE] up to date (current=${current}, latest=${latest.version})`)
     return
   }

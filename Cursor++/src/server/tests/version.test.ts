@@ -19,4 +19,12 @@ describe('extension version ownership', () => {
     expect(isNewerVersion('0.0.16', '0.0.16')).toBe(false)
     expect(isNewerVersion('0.0.15', '0.0.16')).toBe(false)
   })
+
+  it('handles GitHub release tags with a leading v prefix', () => {
+    expect(compareVersions('v0.1.8', '0.1.7')).toBeGreaterThan(0)
+    expect(compareVersions('V0.1.8', 'v0.1.8')).toBe(0)
+    expect(compareVersions('v0.1.7', '0.1.8')).toBeLessThan(0)
+    expect(isNewerVersion('v0.1.8', '0.1.7')).toBe(true)
+    expect(isNewerVersion('v0.1.7', '0.1.7')).toBe(false)
+  })
 })
