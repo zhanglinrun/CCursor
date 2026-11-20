@@ -70,12 +70,19 @@ function prepareRoutingPatches(paths) {
   const backupTargets = new Set([
     ...originals.keys(), paths.glassJs, singleton, ...getAgentHostBackupTargets(paths),
   ]);
-  // Tagged backups belong to a specific app build and patch sequence. Reusing
-  // them for a different or partially updated tree can restore obsolete files.
+  // 已有备份只在「本次要写新内容、且当前文件不是我们打的补丁」时才不可信：
+  // 那说明备份和本机的补丁序列对不上。已带本项目补丁标记的文件属于增量更新
+  // （例如给已安装的机器补一条新子补丁），旧备份仍是干净的原始件，可以复用。
+  const OWN_MARKERS = ['CURSOR-BYOK-HOOK-START', 'byokAgentHostUrlRewrite', 'BYOK-AGENT-HOST-GATE-OFF'];
+  const patchedByUs = file => OWN_MARKERS.some(marker => readFileSync(file, 'utf8').includes(marker));
+  // product.json 只是校验和宿主，本身不带补丁标记，判断时排除。
+  const patchWrites = writes.filter(({ file }) => file !== paths.productJson);
+  const updatingPatchedTree = patchWrites.length > 0 && patchWrites.every(({ file }) => patchedByUs(file));
   for (const file of backupTargets) {
-    if ((writes.length > 0 || !originals.has(file)) && hasBackup(file)) {
-      throw new Error(`Existing backup for ${file} prevents safe application. Start from a clean copy of this Cursor build.`);
-    }
+    if (!hasBackup(file)) continue;
+    if (updatingPatchedTree) continue;
+    if (writes.length === 0 && originals.has(file)) continue;
+    throw new Error(`Existing backup for ${file} prevents safe application. Start from a clean copy of this Cursor build.`);
   }
 
   const unchanged = [...originals.keys()].filter(file => file !== paths.productJson && !planned.has(file));
@@ -85,7 +92,7 @@ function prepareRoutingPatches(paths) {
     const mismatch = Object.keys(expected).find(key => expected[key] !== product.checksums[key]);
     if (mismatch) throw new Error(`Checksum mismatch for ${mismatch}. Start from a clean copy of this Cursor build.`);
   }
-
+  return { originals, writes, targets: [...planned.keys()], reuseBackups: updatingPatchedTree };
   return { originals, writes, targets: [...planned.keys()] };
 }
 
@@ -106,9 +113,9 @@ export async function checkRouting() {
 }
 
 export async function inject() {
-  const { originals, writes, targets } = preflight();
+  const { originals, writes, targets, reuseBackups } = preflight();
   for (const file of targets) {
-    if (readFileSync(file, 'utf-8') !== originals.get(file) || hasBackup(file)) {
+    if (readFileSync(file, 'utf-8') !== originals.get(file) || (hasBackup(file) && !reuseBackups)) {
       throw new Error(`File or backups changed during preflight: ${file}`);
     }
     accessSync(file, constants.W_OK);

@@ -35,12 +35,80 @@ export function isInjectCurrent(code) {
   return isInjectPatched(code) && code.slice(0, 200000).includes(HOOK_PAYLOAD_REV)
     && (isAgentHostGatePatched(code) || !hasAgentHostTopology(code) || isAgentHostTopologyGuarded(code));
 }
+
+// ── Connect transport / auth ready 等待预算 ──
+//
+// Cursor 的 connectRequestService 用两个固定预算等异步条件：
+//   `Fdr=12e4`（120 秒）等 Connect transport 注册，`Qop=3e4`（30 秒）等 auth ready。
+// 在 BYOK 场景里这两条都不会完成（transport 注册发生在 auth ready 之后，而 auth ready
+// 要扩展宿主回调信号），于是插件/技能市场加载一路等满预算才降级 —— 新窗口的首个
+// Agent 回合被一起堵住（实测 116~147 秒；关掉 BYOK 也一样，与登录状态无关）。
+//
+// BYOK 时把两个预算都降到 1.5 秒：等不到就立刻走降级分支，回合不再被插件加载拖住。
+// 关掉 BYOK 仍保留 Cursor 原始预算。
+export const TRANSPORT_WAIT_MARKER = '/*BYOK-TRANSPORT-WAIT*/'
+export const AUTH_WAIT_MARKER = '/*BYOK-AUTH-WAIT*/'
+
+const WAIT_BUDGETS = [
+  { marker: TRANSPORT_WAIT_MARKER, needle: 'connect_transport_wait_timeout', budget: '12e4', label: 'Connect transport' },
+  { marker: AUTH_WAIT_MARKER, needle: 'auth_ready_timeout', budget: '3e4', label: 'auth ready' },
+]
+
+// 初始化语句与使用点之间不会隔太远；超出这个距离视为误命中，放弃改写。
+const WAIT_BUDGET_WINDOW = 6000
+
+export function isTransportWaitPatched(code) {
+  // 任一预算标记存在即视为处理过：不同 Cursor 版本不一定两个锚点都在。
+  return WAIT_BUDGETS.some(({ marker }) => code.includes(marker))
+}
+
+/**
+ * 把等待预算的初始化改成「BYOK 开启时 1.5 秒，否则保持 Cursor 原值」。
+ *
+ * 预算变量名每次构建都会变（当前是 Fdr / Qop），所以按「使用点字符串 → 最近的
+ * `Name=预算`」定位，不写死名字。找不到就跳过，不抛错：这是提速优化，不该让
+ * 路由注入整体失败。
+ */
+export function patchConnectTransportWait(code, log) {
+  let patched = code
+
+  for (const { marker, needle, budget, label } of WAIT_BUDGETS) {
+    if (patched.includes(marker)) continue
+
+    const needleAt = patched.indexOf(needle)
+    if (needleAt < 0) {
+      log?.(`  [wait-budget] ${label}: anchor not found — skipping`)
+      continue
+    }
+
+    const pattern = new RegExp(`([A-Za-z_$][\\w$]*)=${budget}(?=[,;])`, 'g')
+    let candidate = null
+    for (let match = pattern.exec(patched); match; match = pattern.exec(patched)) {
+      if (match.index > needleAt) break
+      if (needleAt - match.index > WAIT_BUDGET_WINDOW) continue
+      candidate = match
+    }
+    if (!candidate) {
+      log?.(`  [wait-budget] ${label}: initializer not found — skipping`)
+      continue
+    }
+
+    const name = candidate[1]
+    const replacement = `${name}=${marker}(function(){try{return localStorage.getItem("__byokModeLastKnown")==="1"?1500:${budget}}catch(e){return ${budget}}})()`
+    log?.(`  [wait-budget] BYOK 下 ${label} 等待预算 ${budget} → 1.5s (${name})`)
+    patched = patched.slice(0, candidate.index) + replacement + patched.slice(candidate.index + candidate[0].length)
+  }
+
+  return patched
+}
+
 // ConnectRPC 客户端模块的 esbuild 注册键。
 //
 // 3.17.8 起构建变更了模块注册键格式:
 //   ≤3.16.29  "out-build/external/bufbuild/connect/callback-client.js"
 //   ≥3.17.8   部分构建为纯文件名 "callback-client.js"，部分打包产物去除了 .js 后缀
 //             保留路径如 "bufbuild/connect/callback-client" 与 "bufbuild/connect/promise-client"
+//
 //
 // 因此锚点列表同时包含带 .js、不带 .js 的模块键及纯文件名回退，确保在各构建形态下均能准确命中。
 const ANCHORS = [
@@ -213,7 +281,10 @@ export function buildHookPayload(hasGlass, label, routes = loadRoutes(), { routi
   const forceRefresh = routingOnly ? '' : `globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);`;
   const refreshLogic = `globalThis.__byokRefreshModels=function(){${forceRefresh}if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("rpc-routes",function(ev){try{var rules=JSON.parse(ev.data);_rpcRules=new Set(rules);try{localStorage.setItem(_byokModeKey,rules.length>0?"1":"0")}catch(x){}if(_byokTopology&&!_byokTopology.byokOn&&rules.length>0)console.warn("[BYOK] remote window ("+_byokTopology.remote+"): BYOK turned on after startup but the remote agent host is still active \\u2014 Reload Window to route Agent requests through BYOK");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,rules.length>0);console.log("[BYOK] ConnectRPC routes hot-reloaded: "+rules.length+" rules"+(_isGlassWindow?" (glass: renderer-level routing)":""))}catch(e){console.warn("[BYOK] rpc-routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
 
-  return main + refreshLogic + pickerRefresh + (routingOnly ? '' : glassNativeRefresh) + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
+  // BYOK 状态要落盘到 localStorage，供 workbench 侧的 transport 等待预算判断。
+  // 原来只有 rpc-routes 事件才写，等于首个窗口拿不到 → 首轮仍白等两分钟。
+  const modeSeed = `try{if(localStorage.getItem(${JSON.stringify('__byokModeLastKnown')})===null)localStorage.setItem(${JSON.stringify('__byokModeLastKnown')},${installByokOn ? '"1"' : '"0"'})}catch(x){}`
+  return main + modeSeed + refreshLogic + pickerRefresh + (routingOnly ? '' : glassNativeRefresh) + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
 }
 
 // ---- AST fingerprinting + patch ----
@@ -655,8 +726,12 @@ function patchGlassExtensionAllowlist(code, log) {
 
 export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = false } = {}) {
   if (isInjectCurrent(code)) {
-    log?.(`[inject] ${label}: already patched`);
-    return code;
+    // 已注入的安装也要能补上后来新增的子补丁（如 transport 等待预算），
+    // 不然只能靠重装 Cursor 才能拿到。
+    const upgraded = patchConnectTransportWait(code, log)
+    if (upgraded !== code) return upgraded
+    log?.(`[inject] ${label}: already patched`)
+    return code
   }
   if (isInjectPatched(code)) {
     const nextStep = routingOnly ? 'restore a clean copy of this Cursor build' : 'run "ccursor update"';
@@ -703,6 +778,9 @@ export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = f
     }
   }
 
+  // transport 等待预算对 routing-only 同样适用：它不改变 BYOK 路由，只是别让
+  // Cursor 在未登录时白等两分钟。
+  patched = patchConnectTransportWait(patched, log)
   if (!patched.includes(HOOK_MARKER)) throw new Error(`Verification failed for ${label}`);
 
   return patched;
