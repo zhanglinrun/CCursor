@@ -170,3 +170,102 @@ test('a late routing incompatibility or stale backup leaves the application unto
   }
   assert.deepEqual(snapshot(home), homeBefore);
 });
+
+test('syncs built-in extension verification hash map regardless of minified var name and restores cleanly on uninstall', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const sha256 = content => createHash('sha256').update(content).digest('hex');
+  const legacyOrigHash = sha256(readApp(legacy));
+  const siblingOrigHash = 'a'.repeat(64);
+  const hostWithS3Map = [
+    'function check(i){if(i&&i in s3){const o=s3[i];if(o){this._logService.trace(`ExtensionService#loadModule checking expected hashes for ${i}`);return o}}}',
+    `var s3={"anysphere.cursor-always-local":{dist:{"254.js":"${'b'.repeat(64)}","main.js":"${legacyOrigHash}"}},"anysphere.cursor-other":{dist:{"main.js":"${siblingOrigHash}"}}};`,
+    'const msg=`Hash mismatch for files: ${m}`;',
+  ].join('\n');
+  writeApp(extensionHost, hostWithS3Map);
+  const product = JSON.parse(readApp('product.json'));
+  product.checksums[extensionHost.slice('out/'.length)] = hash(hostWithS3Map);
+  writeApp('product.json', JSON.stringify(product));
+  const appBefore = snapshot(root);
+
+  const preflight = run('check', '--routing-only');
+  assert.equal(preflight.status, 0, preflight.output);
+  assert.match(preflight.output, /Routing preflight passed/);
+
+  const applied = run('inject');
+  assert.equal(applied.status, 0, applied.output);
+  const patchedLegacyHash = sha256(readApp(legacy));
+  assert.notEqual(patchedLegacyHash, legacyOrigHash);
+  const patchedHost = readApp(extensionHost);
+  assert.ok(patchedHost.includes(`"main.js":"${patchedLegacyHash}"`), 'cursor-always-local hash synced in s3');
+  assert.ok(patchedHost.includes(`"anysphere.cursor-other":{dist:{"main.js":"${siblingOrigHash}"}}`), 'sibling extension hash untouched');
+  const appliedProduct = JSON.parse(readApp('product.json'));
+  assert.equal(appliedProduct.checksums[extensionHost.slice('out/'.length)], hash(patchedHost));
+
+  const rerun = run('inject');
+  assert.equal(rerun.status, 0, rerun.output);
+  assert.match(rerun.output, /Routing patches are current/);
+
+  const removed = run('uninstall');
+  assert.equal(removed.status, 0, removed.output);
+  assert.deepEqual(snapshot(root), appBefore);
+});
+
+test('fails loudly when extensionHostProcess enforces hashes but verification map cannot be located', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const hostBroken = 'function verify(i){this._logService.trace(`ExtensionService#loadModule checking expected hashes for ${i}`);return{valid:!1,error:`Hash mismatch for files: ${i}`}}';
+  writeApp(extensionHost, hostBroken);
+  const product = JSON.parse(readApp('product.json'));
+  product.checksums[extensionHost.slice('out/'.length)] = hash(hostBroken);
+  writeApp('product.json', JSON.stringify(product));
+  const before = snapshot(root);
+
+  for (const args of [['check', '--routing-only'], ['inject']]) {
+    const res = run(...args);
+    assert.equal(res.status, 1, res.output);
+    assert.match(res.output, /verification hash map not found/i);
+    assert.deepEqual(snapshot(root), before);
+  }
+});
+
+test('in-place upgrades a pre-patched Cursor 3.31 tree (_topologyEnabled + stale s3 hash)', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const sha256 = content => createHash('sha256').update(content).digest('hex');
+  const renderer331 = rendererSource.replace('this._agentHostEnabled=a||b', 'this._isGlass=!1,this._topologyEnabled=a&&!b||c,this._logService.info("x")');
+  for (const file of [desktop, glass]) writeApp(file, renderer331);
+  const legacyOrigHash = sha256(readApp(legacy));
+  const hostWithS3Map = `function c(i){if(i&&i in s3){const o=s3[i];this._logService.trace(\`ExtensionService#loadModule checking expected hashes for \${i}\`);}}var s3={"anysphere.cursor-always-local":{dist:{"main.js":"${legacyOrigHash}"}}};`;
+  writeApp(extensionHost, hostWithS3Map);
+  const product = JSON.parse(readApp('product.json'));
+  for (const file of [desktop, glass, extensionHost]) {
+    product.checksums[file.slice('out/'.length)] = hash(readApp(file));
+  }
+  writeApp('product.json', JSON.stringify(product));
+
+  // First inject simulates a clean 3.31 install
+  const first = run('inject');
+  assert.equal(first.status, 0, first.output);
+  for (const file of [desktop, glass]) {
+    assert.match(readApp(file), /this\._topologyEnabled=false\/\*BYOK-AGENT-HOST-GATE-OFF\*\//);
+  }
+  const patchedLegacyHash = sha256(readApp(legacy));
+  assert.ok(readApp(extensionHost).includes(patchedLegacyHash));
+
+  // Simulate an older v0.1.9 injection where _topologyEnabled & s3 were missed while backups exist
+  for (const file of [desktop, glass]) {
+    writeApp(file, readApp(file).replace('this._topologyEnabled=false/*BYOK-AGENT-HOST-GATE-OFF*/', 'this._topologyEnabled=a&&!b||c'));
+  }
+  writeApp(extensionHost, hostWithS3Map);
+  const prod2 = JSON.parse(readApp('product.json'));
+  for (const file of [desktop, glass, extensionHost]) {
+    prod2.checksums[file.slice('out/'.length)] = hash(readApp(file));
+  }
+  writeApp('product.json', JSON.stringify(prod2));
+
+  // Re-inject must upgrade in-place cleanly without rejecting existing backups or rev3 hook
+  const upgraded = run('inject');
+  assert.equal(upgraded.status, 0, upgraded.output);
+  for (const file of [desktop, glass]) {
+    assert.match(readApp(file), /this\._topologyEnabled=false\/\*BYOK-AGENT-HOST-GATE-OFF\*\//);
+  }
+  assert.ok(readApp(extensionHost).includes(patchedLegacyHash));
+});

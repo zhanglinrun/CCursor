@@ -725,13 +725,19 @@ function patchGlassExtensionAllowlist(code, log) {
 }
 
 export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = false } = {}) {
-  if (isInjectCurrent(code)) {
-    // 已注入的安装也要能补上后来新增的子补丁（如 transport 等待预算），
-    // 不然只能靠重装 Cursor 才能拿到。
-    const upgraded = patchConnectTransportWait(code, log)
-    if (upgraded !== code) return upgraded
-    log?.(`[inject] ${label}: already patched`)
-    return code
+  if (isInjectPatched(code) && code.slice(0, 200000).includes(HOOK_PAYLOAD_REV)) {
+    // 已注入的安装也要能原地补上后来新增的子补丁（如 3.31+ 新拓扑字段守卫、
+    // transport 等待预算），不然只能靠重装 Cursor 才能拿到。
+    let upgraded = code;
+    if (!isAgentHostGatePatched(upgraded) && hasAgentHostTopology(upgraded) && !isAgentHostTopologyGuarded(upgraded)) {
+      const topology = guardAgentHostTopology(upgraded, label);
+      upgraded = topology.source;
+      if (topology.changed) log?.(`  Agent host topology guarded (remote + BYOK → legacy), RHS "${topology.rhs}"`);
+    }
+    upgraded = patchConnectTransportWait(upgraded, log);
+    if (upgraded !== code) return upgraded;
+    log?.(`[inject] ${label}: already patched`);
+    return code;
   }
   if (isInjectPatched(code)) {
     const nextStep = routingOnly ? 'restore a clean copy of this Cursor build' : 'run "ccursor update"';

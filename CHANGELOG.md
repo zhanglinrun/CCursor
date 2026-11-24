@@ -8,6 +8,14 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.10 — 修复 Cursor 3.31.15+ 注入后模型不显示（扩展哈希表语义定位与拓扑门闩适配）
+
+- 修复 Cursor 3.31.15+ 路由注入后模型列表不显示 BYOK 模型的问题：
+  - 根因：`inject.js` 此前硬编码了 `extensionHostProcess.js` 内置扩展完整性哈希表的混淆变量名 `n3={`；Cursor 3.31.15 将该变量名压缩为 `s3={`，导致哈希同步被静默跳过、`anysphere.cursor-always-local` 因 `Hash mismatch for files: dist/main.js` 被扩展宿主拒绝激活，进而无法注册 Connect transport，模型列表刷新超时失败并停留在缓存的官方模型。
+  - 修复：重构 `prepareVerifiedHashUpdate`，改为先从 `checking expected hashes for` 日志使用点反推变量名（并辅以结构回退），再用 `acorn` 解析哈希表 AST 精确改写对应扩展 `dist` 条目（支持嵌套路径，避免跨扩展误匹配）；若检测到目标版本启用了哈希校验却找不到哈希表则显式报错，不再静默跳过。
+  - 同时修复 `uninstall.js` 恢复 `inject` 备份组时遗漏 `extensionHostProcess.js` 的问题，并在 `status` 命令与面板 `hasCursorRoutingPatch` 中增加 `cursor-always-local` 哈希同步检查，失步时立即提示「重新注入」。
+- 适配 Cursor 3.31+ `CursorAgentHostEnablementService` 拓扑开关字段改名（`this._agentHostEnabled=` → `this._topologyEnabled=`）：`agent-host-topology.js` 与 `patch-agent-host-gate.js` 同时兼容新旧字段，且已注入旧版补丁的窗口可直接原地升级。
+
 ## 0.1.9 — 修复扩展更新检查始终误判「已是最新版本」
 
 - 修复「检查扩展更新」与后台自动更新检查始终把 GitHub Release（`v0.1.8` 等带 `v` 前缀的 tag）误判为已是最新版本的问题：`compareVersions` 现在自动去除前导 `v` 前缀，且 `update-check.ts` 对比前先归一化版本号；同时补全更新失败提示的中文文案。

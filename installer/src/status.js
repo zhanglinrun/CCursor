@@ -13,6 +13,7 @@ import { inspectAlwaysLocalPatch } from './patch-always-local.js';
 import { getAgentHostBackupTargets, inspectAgentHostPatch } from './patch-agent-host.js';
 import { inspectAgentHostGatePatch } from './patch-agent-host-gate.js';
 import { isInjectCurrent, isInjectPatched } from './patch-inject.js';
+import { inspectVerifiedHashSync } from './inject.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -117,6 +118,20 @@ export async function status() {
     }
     else {
       console.log(na('Agent Host WebSocket transport not present (3.13–3.15)'));
+    }
+  }
+
+  // Built-in extension hash table sync (extensionHostProcess.js)
+  const hashSync = inspectVerifiedHashSync(paths);
+  if (hashSync.hasCheck) {
+    if (hashSync.error) {
+      console.log(fail(`Built-in extension hash table unreadable (${hashSync.error})`));
+    }
+    else if (hashSync.synced) {
+      console.log(ok('Built-in extension hash table synced'));
+    }
+    else {
+      console.log(fail(`Built-in extension hash table out of sync (${hashSync.mismatched.join(', ')}) — run "inject"`));
     }
   }
 

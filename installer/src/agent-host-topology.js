@@ -30,7 +30,15 @@
 import * as acorn from 'acorn';
 
 export const TOPOLOGY_MARKER = '__byokAgentHostTopology';
-const ASSIGN_NEEDLE = 'this._agentHostEnabled=';
+// Cursor 3.13–3.30 使用 this._agentHostEnabled=, 3.31+ 改名为 this._topologyEnabled=
+const ASSIGN_NEEDLES = ['this._agentHostEnabled=', 'this._topologyEnabled='];
+
+function findAssignNeedle(source) {
+  for (const needle of ASSIGN_NEEDLES) {
+    if (source.includes(needle)) return needle;
+  }
+  return null;
+}
 
 function parseExpressionAt(source, offset, label, preserveParens = false) {
   try {
@@ -45,11 +53,11 @@ function parseExpressionAt(source, offset, label, preserveParens = false) {
 
 /** 该 bundle 是否带拓扑开关 (pre-3.13 无) */
 export function hasAgentHostTopology(source) {
-  return source.includes(ASSIGN_NEEDLE);
+  return findAssignNeedle(source) !== null;
 }
 
 export function isAgentHostTopologyGuarded(source) {
-  return source.includes(`${ASSIGN_NEEDLE}(/*${TOPOLOGY_MARKER}*/`);
+  return ASSIGN_NEEDLES.some(needle => source.includes(`${needle}(/*${TOPOLOGY_MARKER}*/`));
 }
 
 /**
@@ -57,12 +65,13 @@ export function isAgentHostTopologyGuarded(source) {
  * @returns {{ start: number, end: number, rhs: string }}
  */
 export function locateTopologyRhs(source, label) {
-  const at = source.indexOf(ASSIGN_NEEDLE);
-  if (at === -1) throw new Error(`${label}: agent host topology assignment not found`);
-  if (source.indexOf(ASSIGN_NEEDLE, at + ASSIGN_NEEDLE.length) !== -1) {
+  const needle = findAssignNeedle(source);
+  if (!needle) throw new Error(`${label}: agent host topology assignment not found`);
+  const at = source.indexOf(needle);
+  if (source.indexOf(needle, at + needle.length) !== -1) {
     throw new Error(`${label}: multiple agent host topology assignments (shape changed; installer needs update)`);
   }
-  const start = at + ASSIGN_NEEDLE.length;
+  const start = at + needle.length;
   const node = parseExpressionAt(source, start, label);
   const rhs = source.slice(start, node.end);
   // 压缩产物里 RHS 是几个局部变量的布尔组合; 过长或跨行说明定位偏了, 宁可不改

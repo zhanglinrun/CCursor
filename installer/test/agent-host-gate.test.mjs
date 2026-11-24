@@ -154,6 +154,26 @@ test('inspect + check report per-target state', () => {
   finally { cleanup(dir); }
 });
 
+test('forces the gate off for Cursor 3.31+ this._topologyEnabled= and is idempotent', () => {
+  const fixture331 = '/*header*/'
+    + 'class CursorAgentHostEnablementService{'
+    + 'constructor(e,t,i,n){let u=!1,l=!1,c=!1;'
+    + 'this._isGlass=n.isGlass===!0,this._topologyEnabled=u&&!l||c,this._logService.info(`[CursorAgentHostEnablementService] effective=${this.isCursorAgentHostEnabled()}`)}'
+    + 'isCursorAgentHostEnabled(){return this._topologyEnabled&&(this._isGlass||!0)}}'
+    + '/*tail*/';
+  const { dir, paths } = makePaths(fixture331, fixture331);
+  try {
+    assert.equal(needsAgentHostGatePatch(paths), true);
+    assert.equal(patchAgentHostGate(paths), 2);
+    const out = readFileSync(paths.workbenchJs, 'utf-8');
+    assert.doesNotThrow(() => acorn.parse(out, { ecmaVersion: 'latest', sourceType: 'module' }));
+    assert.ok(out.includes(`this._topologyEnabled=false${AGENT_HOST_GATE_MARKER},this._logService.info`));
+    assert.equal(needsAgentHostGatePatch(paths), false);
+    assert.equal(patchAgentHostGate(paths), 0);
+  }
+  finally { cleanup(dir); }
+});
+
 test('optional: real 3.23.12 renderer bundle', { skip: process.env.BYOK_REAL_BUNDLE !== '1' }, () => {
   const real = process.env.BYOK_REAL_BUNDLE_PATH
     || '/Applications/Cursor.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js';

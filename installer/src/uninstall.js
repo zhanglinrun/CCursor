@@ -73,9 +73,9 @@ export async function uninstall() {
     if (restoreBackup(file, 'always-local', info)) restored++;
   }
 
-  // 5. 倒序恢复 inject 组 (glass → desktop → product.json, checksum 正确还原)
+  // 5. 倒序恢复 inject 组 (glass → desktop → extensionHostProcess → product.json, checksum 正确还原)
   info('Restoring inject patches...');
-  for (const file of [paths.productJson, paths.glassJs, paths.workbenchJs]) {
+  for (const file of [paths.productJson, paths.extensionHostJs, paths.glassJs, paths.workbenchJs]) {
     if (restoreBackup(file, 'inject', info)) restored++;
   }
 

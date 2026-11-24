@@ -55,10 +55,10 @@ const TAG = 'agent-host-gate';
 /** 幂等标记 —— 同时作为"已修补"的检测依据 */
 export const AGENT_HOST_GATE_MARKER = '/*BYOK-AGENT-HOST-GATE-OFF*/';
 
-/** 唯一赋值点 (读取点是 `this._agentHostEnabled?` / `this._agentHostEnabled}`, 不匹配 '=') */
-const ASSIGN_NEEDLE = 'this._agentHostEnabled=';
-/** 兜底: 任意 `_agentHostEnabled=` (理论上仅赋值点命中) */
-const FIELD_NEEDLE = '_agentHostEnabled=';
+/** 唯一赋值点 (3.23–3.30: this._agentHostEnabled=, 3.31+: this._topologyEnabled=) */
+const ASSIGN_NEEDLES = ['this._agentHostEnabled=', 'this._topologyEnabled='];
+/** 兜底: 任意字段赋值 */
+const FIELD_NEEDLES = ['_agentHostEnabled=', '_topologyEnabled='];
 
 /** renderer 目标 (desktop + glass 都可能承载 enablement service) */
 export function getAgentHostGateTargets(paths) {
@@ -79,7 +79,7 @@ export function isAgentHostGatePatched(source) {
 
 /** 该 Cursor 版本是否带 `cursor_agent_host` 拓扑 (pre-3.23 无此锚点) */
 export function hasAgentHostGateAnchor(source) {
-  return typeof source === 'string' && source.includes(FIELD_NEEDLE);
+  return typeof source === 'string' && FIELD_NEEDLES.some(needle => source.includes(needle));
 }
 
 /** 是否至少有一个目标仍需修补 (存在锚点且未打) */
@@ -116,16 +116,24 @@ export function inspectAgentHostGatePatch(paths) {
 
 /** 定位赋值点右侧表达式的 [start, end) */
 function locateRhs(code, label) {
-  let at = code.indexOf(ASSIGN_NEEDLE);
-  let rhsStart;
-  if (at !== -1) {
-    rhsStart = at + ASSIGN_NEEDLE.length;
+  let rhsStart = -1;
+  for (const needle of ASSIGN_NEEDLES) {
+    const at = code.indexOf(needle);
+    if (at !== -1) {
+      rhsStart = at + needle.length;
+      break;
+    }
   }
-  else {
-    at = code.indexOf(FIELD_NEEDLE);
-    if (at === -1) return null;
-    rhsStart = at + FIELD_NEEDLE.length;
+  if (rhsStart === -1) {
+    for (const needle of FIELD_NEEDLES) {
+      const at = code.indexOf(needle);
+      if (at !== -1) {
+        rhsStart = at + needle.length;
+        break;
+      }
+    }
   }
+  if (rhsStart === -1) return null;
 
   let node;
   try {
@@ -157,7 +165,7 @@ export function prepareAgentHostGatePatch(code, label, log) {
     return { source: code };
   }
   if (!hasAgentHostGateAnchor(code)) {
-    log?.(`[agent-gate] ${label}: no ${FIELD_NEEDLE} anchor, skipping`);
+    log?.(`[agent-gate] ${label}: no topology assignment anchor, skipping`);
     return { source: code };
   }
 

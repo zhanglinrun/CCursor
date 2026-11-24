@@ -4,7 +4,7 @@ Use **your own LLM API keys** in [Cursor IDE](https://cursor.com) — Anthropic,
 
 [中文](README.md) · [Changelog](CHANGELOG.md) · [Integration notes](docs/INTEGRATION.md)
 
-Current version **0.1.9** · Maintained at **zhanglinrun/CCursor** · License AGPL-3.0-or-later
+Current version **0.1.10** · Maintained at **zhanglinrun/CCursor** · License AGPL-3.0-or-later
 
 ## Features
 

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
+import * as acorn from 'acorn';
 import { createBackup, hasBackup, restoreBackup } from './backup.js';
 import { prepareChecksumUpdate } from './checksum.js';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
@@ -11,54 +12,230 @@ import { prepareWorkbenchPatch } from './patch-inject.js';
 import { getProxy39Target, needsProxy39Patch, prepareProxy39Patch } from './patch-proxy-39.js';
 
 const info = message => console.log(`\x1b[34m[>]\x1b[0m ${message}`);
-/** 内置扩展完整性哈希表在 extensionHostProcess.js 里的起始锚点 */
-const VERIFY_MAP_NEEDLE = 'n3={';
-/**
- * 内置扩展完整性校验同步。
- *
- * `extensionHostProcess.js` 里的 `n3` 保存每个内置扩展各文件的 sha256，扩展加载前逐个
- * 比对。我们改了 `cursor-always-local/dist/main.js` 却不改这张表，该扩展就会被判
- * 「Hash mismatch」拒绝激活 —— 而它正是注册 Connect transport、发 auth ready 信号的
- * 扩展：一旦不激活，插件市场、技能同步以及新窗口的首个 Agent 回合都会卡满 Cursor 的
- * 等待预算（实测 116~147 秒）。
- *
- * 这里只改被我们写入过的那几个文件的期望值，其余条目原样保留；找不到锚点就返回 null，
- * 由调用方跳过（不阻断路由注入）。
- */
-export function prepareVerifiedHashUpdate(paths, writes, read) {
-  if (!paths.extensionHostJs || !existsSync(paths.extensionHostJs)) return null;
+const VERIFY_USAGE_NEEDLE = 'checking expected hashes for';
+const VERIFY_MISMATCH_NEEDLE = 'Hash mismatch for files:';
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
+export function hasVerifiedHashCheck(source) {
+  return typeof source === 'string'
+    && (source.includes(VERIFY_USAGE_NEEDLE) || source.includes(VERIFY_MISMATCH_NEEDLE));
+}
+
+function propertyKeyName(prop) {
+  if (!prop || prop.type !== 'Property' || prop.computed) return null;
+  if (prop.key.type === 'Identifier') return prop.key.name;
+  if (prop.key.type === 'Literal' && typeof prop.key.value === 'string') return prop.key.value;
+  return null;
+}
+
+function findObjectProperty(objNode, matcher) {
+  if (!objNode || objNode.type !== 'ObjectExpression') return null;
+  for (const prop of objNode.properties) {
+    const key = propertyKeyName(prop);
+    if (key !== null && matcher(key)) return prop;
+  }
+  return null;
+}
+
+function hasAnySha256Leaf(node) {
+  if (!node) return false;
+  if (node.type === 'Literal') return typeof node.value === 'string' && SHA256_HEX_RE.test(node.value);
+  if (node.type === 'ObjectExpression') return node.properties.some(prop => prop.type === 'Property' && hasAnySha256Leaf(prop.value));
+  return false;
+}
+
+function parseVerifiedHashMapAt(source, braceOffset) {
+  if (braceOffset < 0 || source[braceOffset] !== '{') return null;
+  let node;
+  try {
+    node = acorn.parseExpressionAt(source, braceOffset, { ecmaVersion: 'latest', sourceType: 'script' });
+  }
+  catch {
+    return null;
+  }
+  if (!node || node.type !== 'ObjectExpression' || node.properties.length === 0) return null;
+  const looksLikeHashMap = node.properties.some((prop) => {
+    const extId = propertyKeyName(prop);
+    if (!extId || !extId.includes('.') || prop.value?.type !== 'ObjectExpression') return false;
+    const distProp = findObjectProperty(prop.value, key => key === 'dist');
+    return Boolean(distProp && hasAnySha256Leaf(distProp.value));
+  });
+  return looksLikeHashMap ? node : null;
+}
+
+/**
+ * 定位 extensionHostProcess.js 中的内置扩展完整性哈希表（不依赖混淆变量名）。
+ *
+ * 1. 优先从 `checking expected hashes for` 日志使用点反推变量名（如 n3 / s3），
+ *    再向上查找该变量的 `={...}` 对象字面量并通过 acorn 校验 AST 结构；
+ * 2. 回退直接按 `"anysphere.cursor-always-local":{dist:{` 等条目结构反找外层对象。
+ */
+export function locateVerifiedHashMap(source) {
+  const usageAt = source.indexOf(VERIFY_USAGE_NEEDLE);
+  if (usageAt >= 0) {
+    const before = source.slice(Math.max(0, usageAt - 300), usageAt);
+    const varNames = new Set();
+    for (const match of before.matchAll(/\bin\s+([A-Za-z_$][\w$]*)\)/g)) varNames.add(match[1]);
+    for (const match of before.matchAll(/=\s*([A-Za-z_$][\w$]*)\[/g)) varNames.add(match[1]);
+
+    for (const varName of varNames) {
+      const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const assignRe = new RegExp(`(?:^|[\\s,;])(?:(?:var|let|const)\\s+)?${escaped}\\s*=\\s*\\{`, 'g');
+      const candidates = [];
+      for (const match of source.matchAll(assignRe)) {
+        candidates.push(match.index + match[0].length - 1);
+      }
+      // 优先检查位于使用点之前且离得最近的声明，再检查全文件
+      candidates.sort((a, b) => {
+        const aBefore = a < usageAt ? 0 : 1;
+        const bBefore = b < usageAt ? 0 : 1;
+        if (aBefore !== bBefore) return aBefore - bBefore;
+        return Math.abs(usageAt - a) - Math.abs(usageAt - b);
+      });
+      for (const braceAt of candidates) {
+        const parsed = parseVerifiedHashMapAt(source, braceAt);
+        if (parsed) return parsed;
+      }
+    }
+  }
+
+  // 结构回退：直接寻找带 dist 的内置扩展条目，再反查其外层 `={` 对象起点
+  const entryRe = /["'][^"']+\.(?:cursor-always-local|[a-z0-9-]+)["']\s*:\s*\{\s*["']?dist["']?\s*:\s*\{/gi;
+  const entryOffsets = [];
+  for (const match of source.matchAll(entryRe)) {
+    const isAlwaysLocal = match[0].includes('cursor-always-local');
+    entryOffsets.push({ offset: match.index, priority: isAlwaysLocal ? 0 : 1 });
+    if (entryOffsets.length >= 20) break;
+  }
+  entryOffsets.sort((a, b) => a.priority - b.priority);
+
+  const tried = new Set();
+  for (const { offset } of entryOffsets) {
+    const windowStart = Math.max(0, offset - 32768);
+    const slice = source.slice(windowStart, offset);
+    const openRe = /=\s*\{/g;
+    const opens = [];
+    for (const m of slice.matchAll(openRe)) {
+      opens.push(windowStart + m.index + m[0].length - 1);
+    }
+    for (let i = opens.length - 1; i >= 0; i--) {
+      const braceAt = opens[i];
+      if (tried.has(braceAt)) continue;
+      tried.add(braceAt);
+      const parsed = parseVerifiedHashMapAt(source, braceAt);
+      if (parsed && parsed.start <= offset && offset < parsed.end) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function findExtensionEntryInMap(mapNode, extId) {
+  return findObjectProperty(mapNode, key => key === extId || key.endsWith(`.${extId}`));
+}
+
+function findDistHashLeaf(extEntryNode, relPath) {
+  const segments = ['dist', ...relPath.split('/').filter(Boolean)];
+  let current = extEntryNode.value;
+  for (const seg of segments) {
+    const prop = findObjectProperty(current, key => key === seg);
+    if (!prop) return null;
+    current = prop.value;
+  }
+  if (!current || current.type !== 'Literal' || typeof current.value !== 'string' || !SHA256_HEX_RE.test(current.value)) {
+    return null;
+  }
+  return { node: current, hash: current.value };
+}
+
+function collectExtensionTargets(writes) {
   const targets = [];
   for (const { file, source } of writes) {
     const match = /[\\/]extensions[\\/]([^\\/]+)[\\/]dist[\\/](.+)$/i.exec(file);
     if (match) targets.push({ id: match[1], rel: match[2].replace(/\\/g, '/'), source });
   }
+  return targets;
+}
+
+/**
+ * 内置扩展完整性校验同步。
+ *
+ * `extensionHostProcess.js` 里保存了内置扩展各 dist 文件的 sha256，扩展加载前逐个比对。
+ * 我们改了 `cursor-always-local/dist/main.js` 却不改这张表，该扩展就会被判
+ * 「Hash mismatch」拒绝激活 —— 而它正是注册 Connect transport、发 auth ready 信号的
+ * 扩展：一旦不激活，模型列表刷新、插件市场以及新窗口的首个 Agent 回合都会受阻。
+ *
+ * 这里通过语义定位 + AST 精确改写被我们写入过的文件哈希（不依赖混淆变量名）；
+ * 若目标版本不存在完整性校验则跳过；若存在校验却找不到哈希表则显式报错，避免静默失效。
+ */
+export function prepareVerifiedHashUpdate(paths, writes, read) {
+  if (!paths.extensionHostJs || !existsSync(paths.extensionHostJs)) return null;
+
+  const targets = collectExtensionTargets(writes);
   if (targets.length === 0) return null;
 
   const original = read(paths.extensionHostJs);
-  const mapStart = original.indexOf(VERIFY_MAP_NEEDLE);
-  if (mapStart < 0) return null;
-
-  let source = original;
-  let updated = 0;
-  for (const target of targets) {
-    // 表里的 id 带 publisher 前缀（anysphere.cursor-always-local），只匹配尾部
-    const entryAt = source.indexOf(`${target.id}":{dist:{`, mapStart);
-    if (entryAt < 0) continue;
-    const keyAt = source.indexOf(`"${target.rel}":"`, entryAt);
-    if (keyAt < 0) continue;
-    const hashStart = keyAt + `"${target.rel}":"`.length;
-    const hashEnd = source.indexOf('"', hashStart);
-    if (hashEnd < 0) continue;
-    const current = source.slice(hashStart, hashEnd);
-    if (!/^[0-9a-f]{64}$/.test(current)) continue;
-    const nextHash = createHash('sha256').update(target.source).digest('hex');
-    if (current === nextHash) continue;
-    source = source.slice(0, hashStart) + nextHash + source.slice(hashEnd);
-    updated++;
+  const mapNode = locateVerifiedHashMap(original);
+  if (!mapNode) {
+    if (hasVerifiedHashCheck(original)) {
+      throw new Error('Built-in extension verification hash map not found in extensionHostProcess.js');
+    }
+    return null;
   }
 
-  return updated > 0 ? source : null;
+  const edits = [];
+  for (const target of targets) {
+    const entry = findExtensionEntryInMap(mapNode, target.id);
+    if (!entry) continue;
+    const leaf = findDistHashLeaf(entry, target.rel);
+    if (!leaf) {
+      throw new Error(`Built-in extension hash entry not found for ${target.id}/dist/${target.rel}`);
+    }
+    const nextHash = createHash('sha256').update(target.source).digest('hex');
+    if (leaf.hash === nextHash) continue;
+    edits.push({ start: leaf.node.start + 1, end: leaf.node.end - 1, nextHash });
+  }
+
+  if (edits.length === 0) return null;
+  edits.sort((a, b) => b.start - a.start);
+  let source = original;
+  for (const edit of edits) {
+    source = source.slice(0, edit.start) + edit.nextHash + source.slice(edit.end);
+  }
+  return source;
+}
+
+/** status 用：检查 extensionHostProcess.js 内置扩展哈希表是否与磁盘上的补丁文件一致 */
+export function inspectVerifiedHashSync(paths) {
+  if (!paths.extensionHostJs || !existsSync(paths.extensionHostJs)) {
+    return { present: false, hasCheck: false, synced: true, mismatched: [], error: null };
+  }
+  const source = readFileSync(paths.extensionHostJs, 'utf-8');
+  const hasCheck = hasVerifiedHashCheck(source);
+  const mapNode = locateVerifiedHashMap(source);
+  if (!mapNode) {
+    return {
+      present: true,
+      hasCheck,
+      synced: !hasCheck,
+      mismatched: [],
+      error: hasCheck ? 'verification hash map not found' : null,
+    };
+  }
+
+  const candidateFiles = [paths.alwaysLocalMain, paths.agentHostMain].filter(file => file && existsSync(file));
+  const targets = collectExtensionTargets(candidateFiles.map(file => ({ file, source: readFileSync(file, 'utf-8') })));
+  const mismatched = [];
+  for (const target of targets) {
+    const entry = findExtensionEntryInMap(mapNode, target.id);
+    if (!entry) continue;
+    const leaf = findDistHashLeaf(entry, target.rel);
+    const actualHash = createHash('sha256').update(target.source).digest('hex');
+    if (!leaf || leaf.hash !== actualHash) {
+      mismatched.push(`${target.id}/dist/${target.rel}`);
+    }
+  }
+  return { present: true, hasCheck: true, synced: mismatched.length === 0, mismatched, error: null };
 }
 
 function prepareRoutingPatches(paths) {
@@ -119,10 +296,10 @@ function prepareRoutingPatches(paths) {
 
 
   const backupTargets = new Set([
-    ...originals.keys(), paths.glassJs, singleton, ...getAgentHostBackupTargets(paths),
+    ...originals.keys(), paths.glassJs, paths.extensionHostJs, singleton, ...getAgentHostBackupTargets(paths),
   ]);
 
-  // 内置扩展完整性校验：把我们改过的内置扩展文件的期望哈希同步进 n3，
+  // 内置扩展完整性校验：把我们改过的内置扩展文件的期望哈希同步进哈希表，
   // 否则 cursor-always-local 会被判定 Hash mismatch 而拒绝激活。
   // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
   const verifySources = new Map(writes.map(({ file, source }) => [file, source]));
