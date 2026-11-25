@@ -7,6 +7,8 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
+import { parse } from 'acorn';
+import { HOOK_PAYLOAD_REV, isInjectCurrent, prepareWorkbenchPatch } from '../src/patch-inject.js';
 
 const desktop = 'out/vs/workbench/workbench.desktop.main.js';
 const glass = 'out/vs/workbench/workbench.glass.main.js';
@@ -32,6 +34,10 @@ function setup(log,x){installProxy(x),syncBuiltin(),log.info("[AlwaysLocalSingle
 const hostSource = 'async function verify(pkg){if (!(await signedByPublisher(pkg))) throw Error("Bad signature");}\n';
 
 const hash = source => createHash('sha256').update(source).digest('base64').replace(/=+$/, '');
+const hookStart = '/* CURSOR-BYOK-HOOK-START */';
+const hookEnd = '/* CURSOR-BYOK-HOOK-END */;';
+const remainder = source => source.slice(source.indexOf(hookEnd) + hookEnd.length);
+const withRevision = (source, revision) => `${hookStart}(function(){var __byokRev="__byokHookRev${revision}";})()${hookEnd}${remainder(source)}`;
 
 function snapshot(dir, encoding = 'utf-8') {
   const files = readdirSync(dir, { recursive: true, withFileTypes: true });
@@ -172,6 +178,65 @@ test('a late routing incompatibility or stale backup leaves the application unto
     assert.deepEqual(snapshot(root), stale);
   }
   assert.deepEqual(snapshot(home), homeBefore);
+});
+
+test('upgrades only the delimited rev3 payload and rejects malformed prefixes', () => {
+  const paths = { hasGlass: true };
+  const options = { routingOnly: true };
+  const old = withRevision(prepareWorkbenchPatch(rendererSource, 'desktop', paths, undefined, options), 3);
+  const upgraded = prepareWorkbenchPatch(old, 'desktop', paths, undefined, options);
+  assert.ok(upgraded.startsWith(hookStart));
+  assert.ok(isInjectCurrent(upgraded));
+  assert.ok(upgraded.includes(HOOK_PAYLOAD_REV));
+  assert.equal(remainder(upgraded), remainder(old));
+  parse(upgraded, { ecmaVersion: 'latest', sourceType: 'module' });
+  assert.equal(prepareWorkbenchPatch(upgraded, 'desktop', paths, undefined, options), upgraded);
+
+  for (const malformed of [
+    old.replace(hookEnd, ''),
+    old.replace(hookEnd, hookEnd + hookEnd),
+    ' '.repeat(4) + old,
+    old.replace(hookEnd, ' '.repeat(250000) + hookEnd),
+    old.replace(hookEnd, hookStart + hookEnd),
+  ]) {
+    assert.throws(() => prepareWorkbenchPatch(malformed, 'desktop', paths, undefined, options), /outdated.*prefix is unrecognized/);
+  }
+});
+
+test('inject upgrades rev3 and rev4 to rev5 in place and keeps the original uninstall backups', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const pristine = snapshot(root);
+  const first = run('inject');
+  assert.equal(first.status, 0, first.output);
+  const backups = () => new Map([...snapshot(root)].filter(([file]) => file.includes('.backup-byok-')));
+  const before = backups();
+  assert.ok(before.size > 0);
+  const product = JSON.parse(readApp('product.json'));
+  const oldRenderers = new Map();
+  for (const file of [desktop, glass]) {
+    const old = withRevision(readApp(file), file === desktop ? 3 : 4);
+    oldRenderers.set(file, old);
+    writeApp(file, old);
+    product.checksums[file.slice(4)] = hash(old);
+  }
+  writeApp('product.json', JSON.stringify(product));
+  const preflight = run('check', '--routing-only');
+  assert.equal(preflight.status, 0, preflight.output);
+  assert.equal(readApp(desktop), oldRenderers.get(desktop));
+  const upgraded = run('inject');
+  assert.equal(upgraded.status, 0, upgraded.output);
+  assert.match(upgraded.output, /Routing patches applied to 3 file\(s\)/);
+  assert.deepEqual(backups(), before);
+  const updatedProduct = JSON.parse(readApp('product.json'));
+  for (const [file, old] of oldRenderers) {
+    const source = readApp(file);
+    assert.ok(isInjectCurrent(source));
+    assert.equal(remainder(source), remainder(old));
+    assert.equal(updatedProduct.checksums[file.slice(4)], hash(source));
+    parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  }
+  assert.equal(run('uninstall').status, 0);
+  assert.deepEqual(snapshot(root), pristine);
 });
 
 test('syncs built-in extension verification hash map regardless of minified var name and restores cleanly on uninstall', (t) => {

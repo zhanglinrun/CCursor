@@ -75,6 +75,8 @@ const USER_EXTENSIONS_DIR = join(homedir(), '.cursor', 'extensions')
 const REQUIRED_ARTIFACTS = [
   'extension.js',
   'webview.js',
+  'cursor-i18n-zh.json',
+  'THIRD_PARTY_LICENSES.md',
   // supermarkdown 原生模块：8 个平台组合
   'supermarkdown.darwin-arm64.node',
   'supermarkdown.darwin-x64.node',

@@ -34,6 +34,77 @@ export function initApp(Alpine: AlpineType) {
   const store: any = {
     // ── 来自 extension 推送 ──
     state: null as any,
+    i18nBusy: false,
+    i18nRulesOpen: false,
+    i18nRulesTab: 'custom',
+    i18nRulesSaving: '' as '' | 'custom' | 'english' | 'remove',
+    i18nSource: '',
+    i18nTranslation: '',
+    i18nKeepEnglish: '',
+
+    get i18nCustomRows(): [string, string][] {
+      return Object.entries(this.state?.i18n?.custom ?? {})
+    },
+
+    get i18nDisabledKeys(): string[] {
+      return this.state?.i18n?.disabledKeys ?? []
+    },
+
+    saveLocalizationRules(custom: Record<string, string>, disabledKeys: string[], action: 'custom' | 'english' | 'remove') {
+      if (this.i18nRulesSaving)
+        return
+      this.i18nRulesSaving = action
+      this.post('saveLocalizationRules', { rules: { custom, disabledKeys: [...disabledKeys] } })
+    },
+
+    addCustomTranslation() {
+      const source = this.i18nSource.trim().replace(/\s+/g, ' ')
+      const translation = this.i18nTranslation.trim()
+      if (source && translation) {
+        const custom = { ...this.state.i18n.custom, [source]: translation }
+        this.saveLocalizationRules(custom, this.i18nDisabledKeys, 'custom')
+      }
+    },
+
+    removeCustomTranslation(source: string) {
+      const custom = { ...this.state.i18n.custom }
+      delete custom[source]
+      this.saveLocalizationRules(custom, this.i18nDisabledKeys, 'remove')
+    },
+
+    addEnglishRule() {
+      const source = this.i18nKeepEnglish.trim().replace(/\s+/g, ' ')
+      if (source && !this.i18nDisabledKeys.includes(source))
+        this.saveLocalizationRules({ ...this.state.i18n.custom }, [...this.i18nDisabledKeys, source], 'english')
+    },
+
+    removeEnglishRule(source: string) {
+      const disabledKeys = this.i18nDisabledKeys.filter((key: string) => key !== source)
+      this.saveLocalizationRules({ ...this.state.i18n.custom }, disabledKeys, 'remove')
+    },
+
+    get i18nLabel(): string {
+      if (!this.state?.i18nHookPresent)
+        return '需升级补丁'
+      return this.state.i18n.enabled ? '已启用' : '未启用'
+    },
+
+    get i18nCaption(): string {
+      if (!this.state?.i18nHookPresent)
+        return '当前注入版本较旧，需重新注入以启用实时界面汉化'
+      if (this.state.server === 'offline')
+        return '需先启动本地服务以下发汉化词典'
+      if (this.state.i18n.enabled)
+        return `实时生效中 · 共 ${this.state.i18n.totalCount} 条词条（桌面 + 智能体窗口）`
+      return '覆盖 Agent、设置页、模型选择器等 Cursor 专有界面'
+    },
+
+    setCursorLocalization() {
+      if (!this.state?.i18nHookPresent || this.i18nBusy)
+        return
+      this.i18nBusy = true
+      this.post('setCursorLocalization', { enabled: !this.state.i18n.enabled })
+    },
 
     catalogStatus: null as CatalogStatus | null,
     catalogBusy: false,
@@ -260,7 +331,7 @@ export function initApp(Alpine: AlpineType) {
         return '检查中…'
       if (this.updatePhase === 'installing')
         return this.updateTargetVersion ? `正在更新至 ${this.updateTargetVersion}…` : '更新中…'
-      return '检查扩展更新'
+      return '检查更新'
     },
 
     modelDefaultsPending: {} as Record<string, { pid: string, mid: string, apiModel: string, before: Record<string, any>, remote?: RemoteModelEntry }>,
@@ -1821,6 +1892,28 @@ export function initApp(Alpine: AlpineType) {
       if (!s.usageBootstrapped) {
         s.usageBootstrapped = true
         s.loadUsageStats()
+      }
+    }
+    else if (msg?.type === 'setCursorLocalizationResult') {
+      s.i18nBusy = false
+      if (msg.error)
+        s.toast(`无法更新界面汉化：${msg.error}`, 'error', 6000)
+    }
+    else if (msg?.type === 'saveLocalizationRulesResult') {
+      const action = s.i18nRulesSaving
+      s.i18nRulesSaving = ''
+      if (msg.error) {
+        s.toast(`保存词典失败：${msg.error}`, 'error', 6000)
+      }
+      else {
+        if (action === 'custom') {
+          s.i18nSource = ''
+          s.i18nTranslation = ''
+        }
+        else if (action === 'english') {
+          s.i18nKeepEnglish = ''
+        }
+        s.toast('已保存词典', 'info', 2000)
       }
     }
     else if (msg?.type === 'refreshUsage') {

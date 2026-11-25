@@ -40,12 +40,13 @@ mkdirSync('vsix', { recursive: true });
 copyFileSync(join(__dirname, 'dist', 'cli.cjs'), join(__dirname, 'vsix', 'cli.cjs'));
 copyFileSync(join(__dirname, 'dist', 'restart-inject.cjs'), join(__dirname, 'vsix', 'restart-inject.cjs'));
 mkdirSync('dist', { recursive: true });
-for (const asset of ['models-catalog.json']) {
+for (const asset of ['models-catalog.json', 'cursor-i18n-zh.json']) {
   const src = join(__dirname, 'assets', asset);
   const dest = join(__dirname, 'dist', asset);
   copyFileSync(src, dest);
   console.log('[build] copied asset → dist/%s (%s KB)', asset, (readFileSync(dest).length / 1024).toFixed(1));
 }
+copyFileSync(join(__dirname, '..', 'THIRD_PARTY_LICENSES.md'), join(__dirname, 'dist', 'THIRD_PARTY_LICENSES.md'));
 
 console.log('[build] dist/cli.cjs + dist/restart-inject.cjs (%s KB)', (readFileSync(join(__dirname, 'dist', 'restart-inject.cjs')).length / 1024).toFixed(1));
 console.log('[build] done');

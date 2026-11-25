@@ -10,6 +10,8 @@ export const ROUTES_FILE_NAME = 'routes.json'
 export const PROVIDERS_FILE_NAME = 'providers.json'
 export const DB_FILE_NAME = 'cursor.db'
 export const KNOWLEDGE_BASE_FILE_NAME = 'knowledge-base.json'
+export const I18N_FILE_NAME = 'i18n.json'
+export const CURSOR_I18N_FILE_NAME = 'cursor-i18n-zh.json'
 
 export const DEFAULT_HOST = '127.0.0.1'
 export const DEFAULT_PORT = 39831

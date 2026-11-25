@@ -1,15 +1,13 @@
-/** 低频配置入口折叠收纳，更新操作保持可见。 */
 export function Footer() {
   return (
     <footer class="footer">
-      <details class="footer-advanced">
-        <summary>高级设置</summary>
-        <div class="footer-row">
-          <button type="button" class="secondary" x-on:click="$store.app.post('editRoutes')">编辑路由配置</button>
-          <button type="button" class="secondary" x-on:click="$store.app.post('editProvidersJson')">编辑服务商 JSON</button>
-          <button type="button" class="secondary" x-on:click="$store.app.post('injectRouting')">重新注入</button>
-        </div>
-      </details>
+      <span
+        class="footer-version"
+        x-show="$store.app.state?.version"
+        x-text="'Cursor++ v' + ($store.app.state?.version || '')"
+        x-cloak
+      >
+      </span>
       <button
         type="button"
         class="secondary footer-update"
@@ -18,7 +16,7 @@ export function Footer() {
         title="检查本分支的 GitHub 发行版，有新版时更新扩展"
         x-on:click="$store.app.checkForUpdates()"
       >
-        检查扩展更新
+        检查更新
       </button>
     </footer>
   )

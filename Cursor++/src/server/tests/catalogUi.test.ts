@@ -24,6 +24,41 @@ beforeEach(async () => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
+it('saves dictionary edits without losing the current rules or a failed draft', () => {
+  store.state.i18n = { custom: { About: '关于' }, disabledKeys: ['Rules'] }
+  store.i18nSource = ' New  Agent '
+  store.i18nTranslation = ' 新建助手 '
+  store.addCustomTranslation()
+  expect(postMessage).toHaveBeenLastCalledWith({
+    type: 'saveLocalizationRules',
+    rules: { custom: { 'About': '关于', 'New Agent': '新建助手' }, disabledKeys: ['Rules'] },
+  })
+  const pendingCount = postMessage.mock.calls.length
+  store.removeCustomTranslation('About')
+  expect(postMessage.mock.calls).toHaveLength(pendingCount)
+  receive({ data: { type: 'saveLocalizationRulesResult', error: 'write failed' } })
+  expect(store.i18nSource).toBe(' New  Agent ')
+  expect(store.i18nRulesSaving).toBe('')
+  store.addCustomTranslation()
+  receive({ data: { type: 'saveLocalizationRulesResult' } })
+  expect(store.i18nSource).toBe('')
+  expect(store.i18nTranslation).toBe('')
+
+  store.i18nKeepEnglish = ' Agent '
+  store.addEnglishRule()
+  expect(postMessage).toHaveBeenLastCalledWith({
+    type: 'saveLocalizationRules',
+    rules: { custom: { About: '关于' }, disabledKeys: ['Rules', 'Agent'] },
+  })
+  receive({ data: { type: 'saveLocalizationRulesResult' } })
+  expect(store.i18nKeepEnglish).toBe('')
+  store.removeEnglishRule('Rules')
+  expect(postMessage).toHaveBeenLastCalledWith({
+    type: 'saveLocalizationRules',
+    rules: { custom: { About: '关于' }, disabledKeys: [] },
+  })
+})
+
 const entry = {
   id: 'gpt-6.1-sol',
   providerKey: 'openai',
@@ -148,7 +183,7 @@ it('uses Chinese labels for directory and update states', () => {
   expect(store.catalogSummary).toBe('正在读取模型目录…')
   expect(store.catalogSourceLabel).toBe('读取中')
   expect(store.catalogUpdatedAt).toBe('暂无更新时间')
-  expect(store.updateButtonLabel).toBe('检查扩展更新')
+  expect(store.updateButtonLabel).toBe('检查更新')
   store.updatePhase = 'checking'
   expect(store.updateButtonLabel).toBe('检查中…')
   store.updatePhase = 'installing'

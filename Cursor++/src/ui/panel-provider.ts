@@ -163,11 +163,33 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'toggleServer':
           await vscode.commands.executeCommand('cursor2plus.serverToggle')
           break
-        case 'editRoutes':
-          await vscode.commands.executeCommand('cursor2plus.editRoutes')
+        case 'setCursorLocalization': {
+          try {
+            await vscode.commands.executeCommand('cursor2plus.setCursorLocalization', msg.enabled)
+            await webviewView.webview.postMessage({ type: 'setCursorLocalizationResult' })
+          }
+          catch (error) {
+            logger.warn({ error }, '[UI] failed to update Cursor localization')
+            await webviewView.webview.postMessage({ type: 'setCursorLocalizationResult', error: String(error) })
+          }
           break
-        case 'editProvidersJson':
-          await vscode.commands.executeCommand('cursor2plus.editProviders')
+        }
+        case 'editLocalization':
+          await vscode.commands.executeCommand('cursor2plus.editLocalization')
+          break
+        case 'saveLocalizationRules': {
+          try {
+            await vscode.commands.executeCommand('cursor2plus.saveCursorLocalizationRules', msg.rules)
+            await webviewView.webview.postMessage({ type: 'saveLocalizationRulesResult' })
+          }
+          catch (error) {
+            logger.warn({ error }, '[UI] failed to save Cursor localization rules')
+            await webviewView.webview.postMessage({ type: 'saveLocalizationRulesResult', error: error instanceof Error ? error.message : String(error) })
+          }
+          break
+        }
+        case 'installZhLanguagePack':
+          await vscode.commands.executeCommand('cursor2plus.installZhLanguagePack')
           break
         case 'toggleFileLog':
           await vscode.commands.executeCommand('cursor2plus.toggleFileLog')

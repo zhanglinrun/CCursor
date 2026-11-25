@@ -12,11 +12,11 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
 }
 
-function containsMarker(file: string, marker: string, optional = false): boolean {
+function containsMarker(file: string, marker: string, optional = false, bytes = 128 * 1024): boolean {
   try {
     const fd = openSync(file, 'r')
     try {
-      const buffer = Buffer.alloc(128 * 1024)
+      const buffer = Buffer.alloc(bytes)
       const size = readSync(fd, buffer)
       return buffer.subarray(0, size).includes(marker)
     }
@@ -108,4 +108,16 @@ export function inspectCursorRoutingPatch(appRoot: string): RoutingPatchInspecti
 
 export function hasCursorRoutingPatch(appRoot: string): boolean {
   return inspectCursorRoutingPatch(appRoot).present
+}
+
+export function hasCursorI18nHook(appRoot: string): boolean {
+  const workbench = join(appRoot, 'out', 'vs', 'workbench')
+  const revision = '__byokHookRev5'
+  try {
+    return containsMarker(join(workbench, 'workbench.desktop.main.js'), revision, false, 256 * 1024)
+      && containsMarker(join(workbench, 'workbench.glass.main.js'), revision, true, 256 * 1024)
+  }
+  catch {
+    return false
+  }
 }

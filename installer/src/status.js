@@ -38,10 +38,9 @@ export async function status() {
   if (existsSync(paths.workbenchJs)) {
     const wb = readFileSync(paths.workbenchJs, 'utf-8');
     const injected = isInjectPatched(wb);
-    // 已注入但修订号过旧 = 旧版 ccursor 安装的 hook, 缺少新行为 (如 glass renderer 层路由), 需 update
     console.log(!injected ? fail('Renderer hook not injected (desktop)')
       : isInjectCurrent(wb) ? ok('Renderer hook injected (desktop)')
-        : fail('Renderer hook outdated (desktop) — run "ccursor update"'));
+        : fail('Renderer hook outdated (desktop) — run "ccursor inject"'));
   } else {
     console.log(na('workbench.desktop.main.js not found'));
   }
@@ -50,10 +49,9 @@ export async function status() {
   if (existsSync(paths.glassJs)) {
     const gl = readFileSync(paths.glassJs, 'utf-8');
     const injected = isInjectPatched(gl);
-    // 已注入但修订号过旧 = 旧版 ccursor 安装的 hook, 缺少新行为 (如 glass renderer 层路由), 需 update
     console.log(!injected ? fail('Renderer hook not injected (glass)')
       : isInjectCurrent(gl) ? ok('Renderer hook injected (glass)')
-        : fail('Renderer hook outdated (glass) — run "ccursor update"'));
+        : fail('Renderer hook outdated (glass) — run "ccursor inject"'));
   } else {
     console.log(na('workbench.glass.main.js not found (pre-3.8)'));
   }

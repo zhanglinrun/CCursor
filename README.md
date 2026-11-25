@@ -4,7 +4,7 @@
 
 [English](README_EN.md) · [更新日志](CHANGELOG.md) · [整合记录](docs/INTEGRATION.md)
 
-当前版本 **0.1.12** · 维护仓库 **zhanglinrun/CCursor** · 许可证 AGPL-3.0-or-later
+当前版本 **0.1.13** · 维护仓库 **zhanglinrun/CCursor** · 许可证 AGPL-3.0-or-later
 
 ## 功能
 
@@ -25,7 +25,8 @@
 
 - **可视化配置面板** — 中文本地化的服务商与模型管理界面，内置 models.dev 模型目录的离线快照。点击 **Fetch** 选择端点上的模型，显示名、协议、能力、上下文/输出上限、思考档位与快捷切换参数自动填充；**Save** 后手动编辑始终优先。
 - **用量面板** — 按窗口统计 token 与缓存用量。
-- **扩展更新** — 面板的「检查扩展更新」从本仓库下载最新正式 Release 并替换扩展本体。
+- **Cursor 界面汉化** — 内置 5,100+ 词条（覆盖 Agent、Glass 智能体窗口、Cursor 设置页、模型选择器及 Windows 顶部菜单栏），支持侧栏一键热开关与可视化自定义词典（自定义翻译 / 保留英文），严格跳过代码区、终端与聊天正文。
+- **扩展更新** — 面板底栏的「检查更新」从本仓库下载最新正式 Release 并替换扩展本体。
 
 **窗口与远程兼容**
 
@@ -37,7 +38,7 @@
 
 **用 Cursor 的「从 VSIX 安装」安装 Cursor++。** 标准扩展和 `~/.ccursor` 里的服务商、模型配置会保留在用户目录中。完整 ZIP 提供独立 CLI。
 
-首次启用自有模型或升级 Cursor 后，在普通编辑器窗口打开 Cursor++，点击「重新注入」，再确认重启。扩展会等待 Cursor 正常退出，通过兼容性预检后注入路由，并重新打开 Cursor。已有补丁时，也可以从面板「高级设置」或命令面板打开这个入口。
+首次启用自有模型或升级 Cursor 后，在普通编辑器窗口打开 Cursor++，点击「重新注入」，再确认重启。扩展会等待 Cursor 正常退出，通过兼容性预检后注入路由，并重新打开 Cursor。已有补丁时，也可以从命令面板（`Cursor++: 重新注入`）打开这个入口。
 
 独立维护时，可以在 Cursor 退出后使用 `node installer/dist/cli.cjs check --routing-only` 做只读预检，或用 `node installer/dist/cli.cjs inject` 恢复路由。
 

@@ -4,7 +4,7 @@ Use **your own LLM API keys** in [Cursor IDE](https://cursor.com) — Anthropic,
 
 [中文](README.md) · [Changelog](CHANGELOG.md) · [Integration notes](docs/INTEGRATION.md)
 
-Current version **0.1.12** · Maintained at **zhanglinrun/CCursor** · License AGPL-3.0-or-later
+Current version **0.1.13** · Maintained at **zhanglinrun/CCursor** · License AGPL-3.0-or-later
 
 ## Features
 
@@ -25,7 +25,8 @@ Current version **0.1.12** · Maintained at **zhanglinrun/CCursor** · License A
 
 - **Visual config UI** — Chinese-localized sidebar panel for providers and models, with a model catalog (models.dev) snapshot bundled offline. Click **Fetch**, pick an endpoint model, and display name, protocol, capabilities, context/output limits, thinking level and quick-switch defaults fill in automatically; manual edits always win after **Save**.
 - **Usage dashboard** — per-window token and cache statistics.
-- **Update channel** — the panel's **check for extension updates** downloads the latest stable Release from this repository and replaces the extension body.
+- **Runtime Cursor zh-CN localization** — optional live DOM localization (5,100+ curated entries covering Agent/Composer, Glass Agent Window, Cursor Settings, model picker, and Windows menubar mnemonics) with instant on/off toggle, visual custom dictionary dialog, and strict exclusions for code editors, terminals, and chat message prose.
+- **Update channel** — the footer's **Check for updates** downloads the latest stable Release from this repository and replaces the extension body.
 
 **Window & remote compatibility**
 
@@ -37,7 +38,7 @@ Current version **0.1.12** · Maintained at **zhanglinrun/CCursor** · License A
 
 **Install Cursor++ using Cursor’s “Install from VSIX” command.** The user-installed extension and your existing `~/.ccursor` configuration persist across Cursor upgrades. The full ZIP includes the standalone CLI.
 
-Before first using BYOK or after a Cursor upgrade, open Cursor++ in a regular editor window, click **Reinject** (重新注入), and confirm the restart. The extension waits for Cursor to quit, checks compatibility, applies the routing patches, and reopens Cursor. The same action is available in Advanced Settings or the command palette.
+Before first using BYOK or after a Cursor upgrade, open Cursor++ in a regular editor window, click **Reinject** (重新注入), and confirm the restart. The extension waits for Cursor to quit, checks compatibility, applies the routing patches, and reopens Cursor. The same action is also available from the command palette (`Cursor++: 重新注入`).
 
 For standalone maintenance, close Cursor and run `node installer/dist/cli.cjs check --routing-only` for read-only preflight or `node installer/dist/cli.cjs inject` to restore the routes.
 

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it } from 'vitest'
-import { hasCursorRoutingPatch, inspectCursorRoutingPatch } from '../../cursor-routing'
+import { hasCursorI18nHook, hasCursorRoutingPatch, inspectCursorRoutingPatch } from '../../cursor-routing'
 
 it('detects the missing routing files when Cursor replaces its program files', () => {
   const app = mkdtempSync(join(tmpdir(), 'cursor-routing-'))
@@ -44,6 +44,33 @@ function hashFixture() {
   const actualHash = createHash('sha256').update(agentContent).digest('hex')
   return { app, extHost, actualHash }
 }
+
+it('keeps rev3 and rev4 routing compatible and requires rev5 for current localization', () => {
+  const { app } = hashFixture()
+  const desktop = join(app, 'out/vs/workbench/workbench.desktop.main.js')
+  const glass = join(app, 'out/vs/workbench/workbench.glass.main.js')
+  const rev3 = '/* CURSOR-BYOK-HOOK-START */var revision="__byokHookRev3";'
+  const rev4 = rev3.replace('Rev3', 'Rev4')
+  const rev5 = rev3.replace('Rev3', 'Rev5')
+  try {
+    writeFileSync(desktop, rev3)
+    expect(inspectCursorRoutingPatch(app)).toEqual({ present: true })
+    expect(hasCursorI18nHook(app)).toBe(false)
+    writeFileSync(desktop, rev4)
+    expect(inspectCursorRoutingPatch(app)).toEqual({ present: true })
+    expect(hasCursorI18nHook(app)).toBe(false)
+    writeFileSync(desktop, rev5)
+    expect(hasCursorI18nHook(app)).toBe(true)
+    writeFileSync(glass, rev4)
+    expect(inspectCursorRoutingPatch(app)).toEqual({ present: true })
+    expect(hasCursorI18nHook(app)).toBe(false)
+    writeFileSync(glass, ' '.repeat(200 * 1024) + rev5)
+    expect(hasCursorI18nHook(app)).toBe(true)
+  }
+  finally {
+    rmSync(app, { recursive: true, force: true })
+  }
+})
 
 it('recognizes the routing hash when the next Cursor extension follows it in the verification map', () => {
   const { app, extHost, actualHash } = hashFixture()

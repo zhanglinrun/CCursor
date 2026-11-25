@@ -16,7 +16,6 @@ export function Server() {
       </div>
       <p class="dashboard-service-caption" role="status" x-text="$store.app.serverLabel"></p>
       <div class="dashboard-service-actions">
-        <span class="dashboard-version" x-show="$store.app.state?.version" x-text="'v' + ($store.app.state?.version || '')"></span>
         <button
           type="button"
           class="secondary dashboard-action"

@@ -1,6 +1,8 @@
 import { Banner } from './banner'
 import { ConfirmDialog } from './confirm-dialog'
 import { Footer } from './footer'
+import { Localization } from './localization'
+import { LocalizationDialog } from './localization-dialog'
 import { Providers } from './providers'
 import { WebToolsDialog } from './search-section'
 import { Server } from './server'
@@ -73,6 +75,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         <main>
           <div class="dashboard-page" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab" x-show="$store.app.activeTab === 'dashboard'">
             <Server />
+            <Localization />
             <UsageDashboard />
           </div>
           <div class="config-page" id="config-panel" role="tabpanel" aria-labelledby="config-tab" x-show="$store.app.activeTab === 'config'" x-cloak>
@@ -81,6 +84,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         </main>
 
         <WebToolsDialog />
+        <LocalizationDialog />
         <ConfirmDialog />
 
         <Footer />

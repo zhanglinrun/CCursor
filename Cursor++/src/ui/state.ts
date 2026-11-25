@@ -5,11 +5,13 @@
  * 状态变化时通过 EventEmitter 通知所有消费方。
  */
 import type { RoutingPatchReason } from '../cursor-routing'
+import type { I18nStatus } from '../server/config/i18nStore'
 import type { ByokMode, ProviderEntry } from '../server/data/defaults'
 import * as net from 'node:net'
 import * as vscode from 'vscode'
 import { isServerRunning } from '../server'
 import { getServerConfig } from '../server/config'
+import { getI18nStatus } from '../server/config/i18nStore'
 import { loadProviders } from '../server/config/providersStore'
 import { getByokMode } from '../server/config/routesStore'
 import { getWebTools } from '../server/config/searchConfigStore'
@@ -18,6 +20,7 @@ import { EXTENSION_VERSION } from '../version'
 export type ServerState = 'local' | 'remote' | 'offline'
 
 export type ServerIssue = 'port_occupied' | null
+export const ZH_LANGUAGE_PACK_ID = 'ms-ceintl.vscode-language-pack-zh-hans'
 
 export interface AppState {
   server: ServerState
@@ -28,6 +31,10 @@ export interface AppState {
   byokMode: ByokMode
   routingPatchPresent?: boolean
   routingPatchReason?: RoutingPatchReason
+  i18nHookPresent: boolean
+  i18n: I18nStatus
+  zhLangPackInstalled: boolean
+  uiLanguage: string
   providers: ProviderEntry[]
   webTools: import('../server/data/defaults').WebToolsConfig
   version: string
@@ -45,6 +52,10 @@ let current: AppState = {
   host: '127.0.0.1',
   port: 39831,
   byokMode: 1,
+  i18nHookPresent: false,
+  i18n: getI18nStatus(),
+  zhLangPackInstalled: false,
+  uiLanguage: '',
   version: EXTENSION_VERSION,
   providers: [],
   webTools: { $schemaVersion: 1, search: { providers: [], parallel: false, maxResults: 5, fallbackToDuckDuckGo: true }, fetch: { provider: 'tavily' } },
@@ -60,6 +71,13 @@ export function setRoutingPatchStatus(present: boolean, reason?: RoutingPatchRea
   if (current.routingPatchPresent === present && current.routingPatchReason === reason)
     return
   current = { ...current, routingPatchPresent: present, routingPatchReason: reason }
+  emitter.fire(current)
+}
+
+export function setI18nHookPresent(present: boolean): void {
+  if (current.i18nHookPresent === present)
+    return
+  current = { ...current, i18nHookPresent: present }
   emitter.fire(current)
 }
 
@@ -182,6 +200,10 @@ export async function refreshState(_secrets?: vscode.SecretStorage): Promise<App
     providers,
     routingPatchPresent: current.routingPatchPresent,
     routingPatchReason: current.routingPatchReason,
+    i18nHookPresent: current.i18nHookPresent,
+    i18n: getI18nStatus(),
+    zhLangPackInstalled: Boolean(vscode.extensions.getExtension(ZH_LANGUAGE_PACK_ID)),
+    uiLanguage: vscode.env.language || '',
     webTools: getWebTools(),
     version: EXTENSION_VERSION,
     fileLogEnabled: current.fileLogEnabled,

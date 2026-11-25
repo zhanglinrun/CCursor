@@ -1,12 +1,14 @@
+import type { I18nConfig } from './server/config/i18nStore'
 import type { ByokMode } from './server/data/defaults'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
-import { inspectCursorRoutingPatch } from './cursor-routing'
+import { hasCursorI18nHook, inspectCursorRoutingPatch } from './cursor-routing'
 import { registerRoutingRestart } from './routing-restart'
-import { bumpRefreshSignal, bumpRefreshSignalForModeChange, pushRoutesUpdate, startServer, stopServer } from './server'
+import { bumpRefreshSignal, bumpRefreshSignalForModeChange, pushI18nUpdate, pushRoutesUpdate, startServer, stopServer } from './server'
 import { getServerConfig } from './server/config'
-import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
+import { ensureI18nFile, loadI18nConfig, onI18nChange, setI18nEnabled, startI18nWatcher, stopI18nWatcher, updateI18nConfig } from './server/config/i18nStore'
+import { getI18nFilePath, getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
 import { ensureRoutesFile, getByokMode, loadRoutes, onRoutesChange, requestByokMode, startRoutesWatcher, stopRoutesWatcher } from './server/config/routesStore'
 import { setCursorAppRoot } from './server/database/sqlite'
@@ -15,7 +17,7 @@ import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntim
 import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
-import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState, setRoutingPatchStatus } from './ui/state'
+import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState, setI18nHookPresent, setRoutingPatchStatus, ZH_LANGUAGE_PACK_ID } from './ui/state'
 import { startUpdateCheck, stopUpdateCheck } from './update-check'
 import { EXTENSION_VERSION, isNewerVersion } from './version'
 
@@ -390,9 +392,60 @@ function syncRoutingPatchStatus(): boolean {
   const wasMissing = getState().routingPatchPresent === false
   const inspection = inspectCursorRoutingPatch(vscode.env.appRoot)
   setRoutingPatchStatus(inspection.present, 'reason' in inspection ? inspection.reason : undefined)
+  setI18nHookPresent(hasCursorI18nHook(vscode.env.appRoot))
   if (wasMissing && inspection.present)
     void disableStartupConnectTransport()
   return inspection.present
+}
+
+async function notifyCursorLocalization(change: { enabled: boolean } | { reload: true }): Promise<void> {
+  const { server, host, port } = await refreshState()
+  if (server === 'local') {
+    pushI18nUpdate()
+  }
+  else if (server === 'remote') {
+    void fetch(`http://${host}:${port}/byok/i18n`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(change),
+      signal: AbortSignal.timeout(1500),
+    }).then(async (response) => {
+      await response.body?.cancel()
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}`)
+    }).catch(error => log('warn', `[I18N] Could not notify the BYOK server: ${error}`))
+  }
+}
+
+async function setCursorLocalization(enabled: boolean): Promise<void> {
+  if (typeof enabled !== 'boolean')
+    return
+  await setI18nEnabled(enabled)
+  await notifyCursorLocalization({ enabled })
+}
+
+async function saveCursorLocalizationRules(rules: Pick<I18nConfig, 'custom' | 'disabledKeys'>): Promise<void> {
+  if (!rules?.custom || typeof rules.custom !== 'object' || Array.isArray(rules.custom) || !Array.isArray(rules.disabledKeys))
+    throw new Error('词典规则格式无效')
+  await updateI18nConfig((draft) => {
+    draft.custom = rules.custom
+    draft.disabledKeys = rules.disabledKeys
+  })
+  await notifyCursorLocalization({ reload: true })
+}
+
+async function installZhLanguagePack(): Promise<void> {
+  if (vscode.extensions.getExtension(ZH_LANGUAGE_PACK_ID)) {
+    await vscode.commands.executeCommand('workbench.action.configureLocale')
+    return
+  }
+  try {
+    await vscode.commands.executeCommand('workbench.extensions.installExtension', ZH_LANGUAGE_PACK_ID)
+    await refreshState()
+  }
+  catch {
+    await vscode.commands.executeCommand('workbench.extensions.search', `@id:${ZH_LANGUAGE_PACK_ID}`)
+  }
 }
 
 function renderStatusBar() {
@@ -661,6 +714,14 @@ export async function activate(context: vscode.ExtensionContext) {
         void vscode.window.showWarningMessage('仍检测到补丁缺失或哈希未同步')
     }),
     vscode.commands.registerCommand('cursor2plus.serverToggle', () => toggleServer()),
+    vscode.commands.registerCommand('cursor2plus.setCursorLocalization', setCursorLocalization),
+    vscode.commands.registerCommand('cursor2plus.saveCursorLocalizationRules', saveCursorLocalizationRules),
+    vscode.commands.registerCommand('cursor2plus.toggleCursorLocalization', () => setCursorLocalization(!loadI18nConfig().enabled)),
+    vscode.commands.registerCommand('cursor2plus.editLocalization', async () => {
+      await ensureI18nFile()
+      await vscode.window.showTextDocument(vscode.Uri.file(getI18nFilePath()))
+    }),
+    vscode.commands.registerCommand('cursor2plus.installZhLanguagePack', installZhLanguagePack),
     // 旧入口 (命令面板 / 快捷键): 翻转语义, 500ms 防抖
     vscode.commands.registerCommand('cursor2plus.toggleByok', () => applyByokRequest('toggle', 'command:toggle')),
     // 幂等入口: 设为目标值 (状态栏 / 侧边栏按当前显示状态计算 target)
@@ -685,6 +746,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // 确保配置文件存在 —— 即使 server 未启动,面板也能读写
   await ensureRoutesFile()
   await ensureProvidersFile()
+  await ensureI18nFile()
   const { routingPatchPresent, routingPatchReason } = getState()
   log('info', `[ROUTING] ${routingPatchPresent ? 'Cursor routing patch detected' : `Cursor routing patch not detected (${routingPatchReason})`}`)
 
@@ -694,6 +756,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // 文件监听: 其他实例修改配置时自动同步状态 + UI
   startRoutesWatcher()
   startProvidersWatcher()
+  startI18nWatcher()
+  const disposeI18nWatch = onI18nChange(() => {
+    pushI18nUpdate()
+    void refreshState().catch(error => log('warn', `[I18N] Could not refresh extension state: ${error}`))
+  })
   const disposeRoutesWatch = onRoutesChange(async () => {
     await refreshState()
     renderStatusBar()
@@ -708,7 +775,7 @@ export async function activate(context: vscode.ExtensionContext) {
     await refreshState()
     bumpRefreshSignal()
   })
-  context.subscriptions.push({ dispose: disposeRoutesWatch }, { dispose: disposeProvidersWatch })
+  context.subscriptions.push({ dispose: disposeRoutesWatch }, { dispose: disposeProvidersWatch }, { dispose: disposeI18nWatch })
 
   // 初始化状态
   await refreshState()
@@ -754,6 +821,7 @@ export async function deactivate() {
   closeLogFileStream()
   stopRoutesWatcher()
   stopProvidersWatcher()
+  stopI18nWatcher()
   await stopServer()
   if (outputChannel)
     outputChannel.dispose()

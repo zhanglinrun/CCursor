@@ -10,11 +10,16 @@ const HUB_URL = "https://ccursor.cometix.dev";
 
 function copyRuntimeAssets() {
   mkdirSync(join(__dirname, "dist"), { recursive: true });
-  // Single canonical snapshot shared with the installer; required by VSIX-only upgrades.
+  // Canonical assets shared with the installer; required by VSIX-only upgrades.
   cpSync(
     join(__dirname, "..", "installer", "assets", "models-catalog.json"),
     join(__dirname, "dist", "models-catalog.json"),
   );
+  cpSync(
+    join(__dirname, "..", "installer", "assets", "cursor-i18n-zh.json"),
+    join(__dirname, "dist", "cursor-i18n-zh.json"),
+  );
+  cpSync(join(__dirname, "..", "THIRD_PARTY_LICENSES.md"), join(__dirname, "dist", "THIRD_PARTY_LICENSES.md"));
 
   // Copy supermarkdown NAPI .node binaries + JS entry to dist/
   const smDir = join(__dirname, "node_modules", "@vakra-dev", "supermarkdown");

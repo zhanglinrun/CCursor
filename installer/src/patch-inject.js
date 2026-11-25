@@ -11,23 +11,28 @@ import { loadRoutes } from './routes.js';
 import { BASE_REDIRECT } from './defaults.js';
 import { DEFAULT_REDIRECT } from './defaults.js';
 import { GLASS_FORCE_REFRESH_MARKER, isGlassRefreshPatched, patchGlassModelRefresh } from './patch-glass-refresh.js';
+import { installRendererI18n } from './i18n-runtime.js';
 import { isAgentHostGatePatched } from './patch-agent-host-gate.js';
 import { guardAgentHostTopology, hasAgentHostTopology, isAgentHostTopologyGuarded } from './agent-host-topology.js';
 
 const HOOK_MARKER = '__byokWrapTransport';
 const HOOK_SOURCE_MARKER = 'CURSOR-BYOK-HOOK-START';
+const HOOK_START = `/* ${HOOK_SOURCE_MARKER} */`;
+const HOOK_END = '/* CURSOR-BYOK-HOOK-END */;';
 const HOOK_CALL_SITE = `typeof globalThis.${HOOK_MARKER}==="function"?globalThis.${HOOK_MARKER}(`;
 
 /** Verify both the prepended payload and the active Connect transport call site. */
 export function isInjectPatched(code) {
-  return code.slice(0, 120000).includes(`/* ${HOOK_SOURCE_MARKER} */`)
+  return code.slice(0, 120000).includes(HOOK_START)
     && code.includes(HOOK_CALL_SITE);
 }
 
 // hook payload 修订号: payload 行为变化时递增, 让已安装的旧 hook 被识别为「过期」(isInjectPatched 只看标记)
 //   rev2: glass 窗口 renderer 层 ConnectRPC 路由 (rpc-routes 事件 + 本地 Connect unary / server-streaming)
 //   rev3: 远端窗口 agent host 拓扑守卫 (__byokAgentHostTopology, PR #33; 见 agent-host-topology.js)
-export const HOOK_PAYLOAD_REV = '__byokHookRev3';
+//   rev4: 运行时界面汉化和词典热更新
+//   rev5: 支持 Windows 菜单项中的助记键文本
+export const HOOK_PAYLOAD_REV = '__byokHookRev5';
 // 本 fork 的 agent-gate 补丁 (patch-agent-host-gate.js) 强制关闭 cursor_agent_host, 会把拓扑守卫的
 // 赋值右侧整体改写为 `false/*BYOK-AGENT-HOST-GATE-OFF*/` —— 赋值点不再有 topology 包裹,
 // 因此 gate 已打也视为「当前」(与拓扑守卫二选一即可)。
@@ -203,6 +208,10 @@ function findFunctionStarts(source, from, windowSize) {
 //   4. EventSource 订阅 /byok/events —— refresh 事件驱动刷新, routes 事件热更新
 //      REST 白名单（白名单同时是 BYOK ON/OFF 的判据）
 
+function buildI18nRuntimeSnippet() {
+  return `;var _byokI18nActive=(${installRendererI18n.toString()})(_byokUrl,_byokEs);`;
+}
+
 export function buildHookPayload(hasGlass, label, routes = loadRoutes(), { routingOnly = false } = {}) {
   const BYOK_HOST = routes.server.host;
   const BYOK_PORT = routes.server.port;
@@ -248,7 +257,7 @@ export function buildHookPayload(hasGlass, label, routes = loadRoutes(), { routi
   // 搜索框结构: div.ui-palette-input-wrapper[cmdk-input-wrapper] > icon + input
   // 在 wrapper 末尾追加 button，flex 布局自动排右。
   // 使用 __icon-button 原生样式 (16px, transparent bg, cursor:pointer)。
-  const pickerRefresh = `(function(){if(!document.body)return;var _prObs=new MutationObserver(function(){var inp=document.querySelector('input[placeholder="Search models"]');if(!inp)return;var wrap=inp.closest(".ui-input-group");if(!wrap||wrap.querySelector("#byok-refresh-btn"))return;var btn=document.createElement("button");btn.type="button";btn.id="byok-refresh-btn";var _rDonor=_hasGlass?document.querySelector("button.ui-icon-button"):null;btn.className=_rDonor?_rDonor.className:"ui-icon-button";btn.dataset.variant="default";btn.dataset.size="sm";btn.setAttribute("aria-label","Refresh Models");btn.style.cssText="margin-right:4px;flex-shrink:0;cursor:pointer;";btn.textContent="\\u21BB";btn.addEventListener("click",function(ev){ev.stopPropagation();globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels();console.log("[BYOK] manual refresh from picker")});wrap.appendChild(btn)});_prObs.observe(document.body,{childList:true,subtree:true})})();`;
+  const pickerRefresh = `(function(){if(typeof document==="undefined"||typeof MutationObserver==="undefined")return;function setup(){if(!document.body)return;var _prObs=new MutationObserver(function(){var inp=document.querySelector('input[placeholder="Search models"]');if(!inp&&_byokI18nActive&&_byokI18nActive()&&document.querySelectorAll)inp=Array.from(document.querySelectorAll("input[placeholder]")).find(function(el){return globalThis.__byokI18nOrigAttr(el,"placeholder")==="Search models"});if(!inp)return;var wrap=inp.closest(".ui-input-group");if(!wrap||wrap.querySelector("#byok-refresh-btn"))return;var btn=document.createElement("button");btn.type="button";btn.id="byok-refresh-btn";var _rDonor=_hasGlass?document.querySelector("button.ui-icon-button"):null;btn.className=_rDonor?_rDonor.className:"ui-icon-button";btn.dataset.variant="default";btn.dataset.size="sm";btn.setAttribute("aria-label","Refresh Models");btn.style.cssText="margin-right:4px;flex-shrink:0;cursor:pointer;";btn.textContent="\\u21BB";btn.addEventListener("click",function(ev){ev.stopPropagation();globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels();console.log("[BYOK] manual refresh from picker")});wrap.appendChild(btn)});_prObs.observe(document.body,{childList:true,subtree:true})}if(document.body)setup();else if(document.addEventListener)document.addEventListener("DOMContentLoaded",setup,{once:true})})();`;
 
   // Glass sidebar BYOK 状态指示器
   //
@@ -274,17 +283,17 @@ export function buildHookPayload(hasGlass, label, routes = loadRoutes(), { routi
   // 所以这里不接管点击，只在捕获阶段置位 `__byokForceRefresh`，让原生刷新照常执行
   // （spinner / 持久化 / picker 重渲染全部保持原样），由 patch-glass-refresh.js
   // 在方法入口跳过未认证的提前返回。
-  const glassNativeRefresh = `(function(){if(!_hasGlass||typeof document==="undefined")return;function _isModelRefreshControl(el){try{var label=(el.getAttribute&&(el.getAttribute("title")||el.getAttribute("aria-label"))||"")+" "+(el.textContent||"").slice(0,40);return /refresh/i.test(label)&&/model/i.test(label)}catch(e){return false}}document.addEventListener("click",function(ev){try{var t=ev.target;if(!t||typeof t.closest!=="function")return;var el=t.closest('button,[role="menuitem"],[role="option"]');if(!el||!_isModelRefreshControl(el))return;globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);console.log("[BYOK] agent window: refresh with BYOK bypass armed")}catch(e){}},true)})();`;
+  const glassNativeRefresh = `(function(){if(!_hasGlass||typeof document==="undefined"||!document.addEventListener)return;function _isModelRefreshControl(el){try{var original=globalThis.__byokI18nOrigAttr||function(node,attr){return node.getAttribute(attr)};var text=globalThis.__byokI18nOrigText?globalThis.__byokI18nOrigText(el):el.textContent;var label=(original(el,"title")||"")+" "+(original(el,"aria-label")||"")+" "+(text||"").slice(0,40);return /refresh/i.test(label)&&/model/i.test(label)}catch(e){return false}}document.addEventListener("click",function(ev){try{var t=ev.target;if(!t||typeof t.closest!=="function")return;var el=t.closest('button,[role="menuitem"],[role="option"]');if(!el||!_isModelRefreshControl(el))return;globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);console.log("[BYOK] agent window: refresh with BYOK bypass armed")}catch(e){}},true)})();`;
 
-  const glassStatus = `(function(){var _bEl=null,_bTip=null,_bSrv=false,_bMode=false;function _bCreate(){var e=document.createElement("button");e.type="button";e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.id="byok-glass-status";if(_hasGlass){var donor=document.querySelector("button.ui-icon-button");if(donor){e.className=donor.className}else{e.className="ui-icon-button"}e.style.cssText="width:auto;min-width:auto;font-size:10px;gap:2px;white-space:nowrap;"}else{e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.style.cssText="font-size:11px;gap:3px;width:auto;white-space:nowrap;"}e.addEventListener("click",function(){var target=_bMode?0:1;fetch(_byokUrl+"/byok/mode",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({byokMode:target,source:"glass"})}).then(function(r){return r.status===404?fetch(_byokUrl+"/byok/toggle",{method:"POST"}):r}).then(function(r){return r.json()}).then(function(d){console.log("[BYOK] mode \\u2192",d.byokMode?"ON":"OFF",d.changed===false?"(unchanged)":"")}).catch(function(e){console.warn("[BYOK] mode change failed:",e&&e.message||e)})});e.addEventListener("mouseenter",function(){_bShowTip()});e.addEventListener("mouseleave",function(){_bHideTip()});return e}function _bShowTip(){if(_bTip||!_bEl)return;var t=document.createElement("div");t.className="ui-tooltip";t.setAttribute("role","tooltip");t.style.cssText="position:fixed;z-index:99999;pointer-events:none;box-sizing:border-box;width:max-content;max-width:320px;background:var(--cursor-bg-elevated);color:var(--cursor-text-primary);border:var(--ui-tooltip-border-width,1px) solid var(--cursor-stroke-primary);border-radius:var(--ui-tooltip-border-radius,var(--cursor-radius-lg));box-shadow:var(--ui-tooltip-box-shadow,var(--cursor-box-shadow-popup));padding:var(--ui-tooltip-padding-y,var(--cursor-spacing-1-5)) var(--ui-tooltip-padding-x,var(--cursor-spacing-2-5));font-size:var(--ui-tooltip-font-size,var(--cursor-font-size-base));line-height:var(--ui-tooltip-line-height,var(--cursor-line-height-base));letter-spacing:var(--ui-tooltip-letter-spacing,var(--cursor-letter-spacing-base));white-space:pre-line;";t.textContent=(_bSrv?"Server online":"Server offline")+" \\u00B7 "+(_bMode?"BYOK ON":"BYOK OFF");document.body.appendChild(t);var r=_bEl.getBoundingClientRect();var tw=t.offsetWidth,th=t.offsetHeight;t.style.left=Math.round(r.left+r.width/2-tw/2)+"px";t.style.top=Math.round(r.top-th-6)+"px";_bTip=t}function _bHideTip(){if(_bTip){_bTip.remove();_bTip=null}}function _bRender(){if(!_bEl)return;var icon=_bSrv?"\\u2713":"\\u2717";var glyph=_bMode?"\\u25C9":"\\u25CB";_bEl.textContent=icon+" BYOK "+glyph}function _bInject(){if(_bEl&&document.contains(_bEl))return;var footer=document.querySelector('[data-component="glass-sidebar-footer"]');if(footer){var gear=footer.querySelector("button.ui-icon-button");if(gear&&gear.parentElement){_bEl=_bCreate();_bRender();gear.parentElement.insertBefore(_bEl,gear);return}}var trigger=document.querySelector(".glass-sidebar-footer-account-trigger");var endIcon=trigger&&trigger.querySelector(".ui-sidebar-menu-button-end");if(trigger&&endIcon){_bEl=_bCreate();_bRender();trigger.insertBefore(_bEl,endIcon);return}var actOld=document.querySelector(".glass-sidebar-footer-actions-right");if(actOld){_bEl=_bCreate();_bRender();actOld.insertBefore(_bEl,actOld.firstChild)}}if(document.body){var _bObs=new MutationObserver(function(){_bInject()});_bObs.observe(document.body,{childList:true,subtree:true});_bInject()}globalThis.__byokGlassStatus=function(srv,mode){if(srv!==void 0)_bSrv=srv;if(mode!==void 0)_bMode=mode;_bRender()}})();`;
+  const glassStatus = `(function(){if(typeof document==="undefined"||typeof MutationObserver==="undefined")return;var _bEl=null,_bTip=null,_bSrv=false,_bMode=false;function _bCreate(){var e=document.createElement("button");e.type="button";e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.id="byok-glass-status";if(_hasGlass){var donor=document.querySelector("button.ui-icon-button");if(donor){e.className=donor.className}else{e.className="ui-icon-button"}e.style.cssText="width:auto;min-width:auto;font-size:10px;gap:2px;white-space:nowrap;"}else{e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.style.cssText="font-size:11px;gap:3px;width:auto;white-space:nowrap;"}e.addEventListener("click",function(){var target=_bMode?0:1;fetch(_byokUrl+"/byok/mode",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({byokMode:target,source:"glass"})}).then(function(r){return r.status===404?fetch(_byokUrl+"/byok/toggle",{method:"POST"}):r}).then(function(r){return r.json()}).then(function(d){console.log("[BYOK] mode \\u2192",d.byokMode?"ON":"OFF",d.changed===false?"(unchanged)":"")}).catch(function(e){console.warn("[BYOK] mode change failed:",e&&e.message||e)})});e.addEventListener("mouseenter",function(){_bShowTip()});e.addEventListener("mouseleave",function(){_bHideTip()});return e}function _bShowTip(){if(_bTip||!_bEl)return;var t=document.createElement("div");t.className="ui-tooltip";t.setAttribute("role","tooltip");t.style.cssText="position:fixed;z-index:99999;pointer-events:none;box-sizing:border-box;width:max-content;max-width:320px;background:var(--cursor-bg-elevated);color:var(--cursor-text-primary);border:var(--ui-tooltip-border-width,1px) solid var(--cursor-stroke-primary);border-radius:var(--ui-tooltip-border-radius,var(--cursor-radius-lg));box-shadow:var(--ui-tooltip-box-shadow,var(--cursor-box-shadow-popup));padding:var(--ui-tooltip-padding-y,var(--cursor-spacing-1-5)) var(--ui-tooltip-padding-x,var(--cursor-spacing-2-5));font-size:var(--ui-tooltip-font-size,var(--cursor-font-size-base));line-height:var(--ui-tooltip-line-height,var(--cursor-line-height-base));letter-spacing:var(--ui-tooltip-letter-spacing,var(--cursor-letter-spacing-base));white-space:pre-line;";t.textContent=(_bSrv?"Server online":"Server offline")+" \\u00B7 "+(_bMode?"BYOK ON":"BYOK OFF");document.body.appendChild(t);var r=_bEl.getBoundingClientRect();var tw=t.offsetWidth,th=t.offsetHeight;t.style.left=Math.round(r.left+r.width/2-tw/2)+"px";t.style.top=Math.round(r.top-th-6)+"px";_bTip=t}function _bHideTip(){if(_bTip){_bTip.remove();_bTip=null}}function _bRender(){if(!_bEl)return;var icon=_bSrv?"\\u2713":"\\u2717";var glyph=_bMode?"\\u25C9":"\\u25CB";_bEl.textContent=icon+" BYOK "+glyph}function _bInject(){if(_bEl&&document.contains(_bEl))return;var footer=document.querySelector('[data-component="glass-sidebar-footer"]');if(footer){var gear=footer.querySelector("button.ui-icon-button");if(gear&&gear.parentElement){_bEl=_bCreate();_bRender();gear.parentElement.insertBefore(_bEl,gear);return}}var trigger=document.querySelector(".glass-sidebar-footer-account-trigger");var endIcon=trigger&&trigger.querySelector(".ui-sidebar-menu-button-end");if(trigger&&endIcon){_bEl=_bCreate();_bRender();trigger.insertBefore(_bEl,endIcon);return}var actOld=document.querySelector(".glass-sidebar-footer-actions-right");if(actOld){_bEl=_bCreate();_bRender();actOld.insertBefore(_bEl,actOld.firstChild)}}if(document.body){var _bObs=new MutationObserver(function(){_bInject()});_bObs.observe(document.body,{childList:true,subtree:true});_bInject()}globalThis.__byokGlassStatus=function(srv,mode){if(srv!==void 0)_bSrv=srv;if(mode!==void 0)_bMode=mode;_bRender()}})();`;
 
   const forceRefresh = routingOnly ? '' : `globalThis.${GLASS_FORCE_REFRESH_MARKER}=true;setTimeout(function(){globalThis.${GLASS_FORCE_REFRESH_MARKER}=false},8000);`;
-  const refreshLogic = `globalThis.__byokRefreshModels=function(){${forceRefresh}if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("rpc-routes",function(ev){try{var rules=JSON.parse(ev.data);_rpcRules=new Set(rules);try{localStorage.setItem(_byokModeKey,rules.length>0?"1":"0")}catch(x){}if(_byokTopology&&!_byokTopology.byokOn&&rules.length>0)console.warn("[BYOK] remote window ("+_byokTopology.remote+"): BYOK turned on after startup but the remote agent host is still active \\u2014 Reload Window to route Agent requests through BYOK");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,rules.length>0);console.log("[BYOK] ConnectRPC routes hot-reloaded: "+rules.length+" rules"+(_isGlassWindow?" (glass: renderer-level routing)":""))}catch(e){console.warn("[BYOK] rpc-routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
+  const refreshLogic = `globalThis.__byokRefreshModels=function(){${forceRefresh}if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=typeof document!=="undefined"&&document.querySelector('[title="Refresh model list"]');if(!btn&&typeof document!=="undefined"&&globalThis.__byokI18nOrigAttr&&document.querySelectorAll)btn=Array.from(document.querySelectorAll("button[title],[role=button][title]")).find(function(el){return globalThis.__byokI18nOrigAttr(el,"title")==="Refresh model list"});if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("rpc-routes",function(ev){try{var rules=JSON.parse(ev.data);_rpcRules=new Set(rules);try{localStorage.setItem(_byokModeKey,rules.length>0?"1":"0")}catch(x){}if(_byokTopology&&!_byokTopology.byokOn&&rules.length>0)console.warn("[BYOK] remote window ("+_byokTopology.remote+"): BYOK turned on after startup but the remote agent host is still active \\u2014 Reload Window to route Agent requests through BYOK");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,rules.length>0);console.log("[BYOK] ConnectRPC routes hot-reloaded: "+rules.length+" rules"+(_isGlassWindow?" (glass: renderer-level routing)":""))}catch(e){console.warn("[BYOK] rpc-routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
 
   // BYOK 状态要落盘到 localStorage，供 workbench 侧的 transport 等待预算判断。
   // 原来只有 rpc-routes 事件才写，等于首个窗口拿不到 → 首轮仍白等两分钟。
   const modeSeed = `try{if(localStorage.getItem(${JSON.stringify('__byokModeLastKnown')})===null)localStorage.setItem(${JSON.stringify('__byokModeLastKnown')},${installByokOn ? '"1"' : '"0"'})}catch(x){}`
-  return main + modeSeed + refreshLogic + pickerRefresh + (routingOnly ? '' : glassNativeRefresh) + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
+  return main + modeSeed + refreshLogic + buildI18nRuntimeSnippet() + pickerRefresh + (routingOnly ? '' : glassNativeRefresh) + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
 }
 
 // ---- AST fingerprinting + patch ----
@@ -724,11 +733,37 @@ function patchGlassExtensionAllowlist(code, log) {
   return result;
 }
 
+function buildWorkbenchPrefix(paths, label, routingOnly, keepGlassRefresh = false) {
+  const payload = buildHookPayload(paths.hasGlass, label, undefined, { routingOnly: routingOnly && !keepGlassRefresh });
+  if (routingOnly) {
+    try {
+      acorn.parse(payload, { ecmaVersion: 'latest', sourceType: 'script' });
+    } catch (error) {
+      throw new Error(`${label}: renderer routing payload failed to parse: ${error.message}`);
+    }
+  }
+  return HOOK_START + payload + HOOK_END;
+}
+
 export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = false } = {}) {
-  if (isInjectPatched(code) && code.slice(0, 200000).includes(HOOK_PAYLOAD_REV)) {
+  if (isInjectPatched(code)) {
+    let upgraded = code;
+    if (!code.slice(0, 200000).includes(HOOK_PAYLOAD_REV)) {
+      const end = code.indexOf(HOOK_END, HOOK_START.length);
+      const remainder = code.slice(end + HOOK_END.length);
+      if (!code.startsWith(HOOK_START) || end < 0 || end + HOOK_END.length > 250000
+        || code.indexOf(HOOK_END, end + HOOK_END.length) !== -1
+        || code.indexOf(HOOK_START, HOOK_START.length) !== -1
+        || !remainder.includes(HOOK_CALL_SITE)) {
+        throw new Error(`${label}: renderer hook is outdated and its prefix is unrecognized; restore a clean copy of this Cursor build`);
+      }
+      // Preserve the native Glass refresh bridge when upgrading an existing legacy installer patch.
+      const keepGlassRefresh = label === 'glass' && isGlassRefreshPatched(remainder);
+      upgraded = buildWorkbenchPrefix(paths, label, routingOnly, keepGlassRefresh) + remainder;
+      log?.(`[inject] ${label}: upgraded renderer hook to ${HOOK_PAYLOAD_REV}`);
+    }
     // 已注入的安装也要能原地补上后来新增的子补丁（如 3.31+ 新拓扑字段守卫、
     // transport 等待预算），不然只能靠重装 Cursor 才能拿到。
-    let upgraded = code;
     if (!isAgentHostGatePatched(upgraded) && hasAgentHostTopology(upgraded) && !isAgentHostTopologyGuarded(upgraded)) {
       const topology = guardAgentHostTopology(upgraded, label);
       upgraded = topology.source;
@@ -738,10 +773,6 @@ export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = f
     if (upgraded !== code) return upgraded;
     log?.(`[inject] ${label}: already patched`);
     return code;
-  }
-  if (isInjectPatched(code)) {
-    const nextStep = routingOnly ? 'restore a clean copy of this Cursor build' : 'run "ccursor update"';
-    throw new Error(`${label}: renderer hook is outdated (missing ${HOOK_PAYLOAD_REV}) — ${nextStep}`);
   }
   if (code.includes(HOOK_MARKER) || code.includes(HOOK_SOURCE_MARKER)) {
     throw new Error(`${label}: partial renderer hook detected (payload/call-site mismatch)`);
@@ -762,15 +793,7 @@ export function prepareWorkbenchPatch(code, label, paths, log, { routingOnly = f
   patched = topology.source;
   if (topology.changed) log?.(`  Agent host topology guarded (remote + BYOK → legacy), RHS "${topology.rhs}"`);
   // 3. 注入 hook payload (放最前面优先执行)
-  const payload = buildHookPayload(paths.hasGlass, label, undefined, { routingOnly });
-  if (routingOnly) {
-    try {
-      acorn.parse(payload, { ecmaVersion: 'latest', sourceType: 'script' });
-    } catch (error) {
-      throw new Error(`${label}: renderer routing payload failed to parse: ${error.message}`);
-    }
-  }
-  patched = `/* CURSOR-BYOK-HOOK-START */${payload}/* CURSOR-BYOK-HOOK-END */;${patched}`;
+  patched = buildWorkbenchPrefix(paths, label, routingOnly) + patched;
   if (!routingOnly) {
     // Legacy installer extras: MAX Mode, KaTeX SVG, extension allowlist, and Glass refresh.
     patched = patchMaxModeToggle(patched, log);

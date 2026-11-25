@@ -9,6 +9,7 @@ import cors from '@fastify/cors'
  */
 import Fastify from 'fastify'
 import { EXTENSION_VERSION, isNewerVersion } from '../version'
+import { ensureI18nFile, getI18nPayload, getI18nStatus, setI18nEnabled } from './config/i18nStore'
 import { ensureProvidersFile } from './config/providersStore'
 import { ensureRoutesFile, loadRoutes, requestByokMode } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
@@ -206,6 +207,25 @@ export function pushRoutesUpdate(redirect: string[]): void {
 
 export interface StartServerOptions extends RuntimeConfigInit {}
 
+function writeI18nEvent(reply: any, status = getI18nStatus()): void {
+  const { enabled, hash } = status
+  reply.raw.write(`event: i18n\ndata: ${JSON.stringify({ enabled, hash })}\n\n`)
+}
+
+export function pushI18nUpdate(): void {
+  if (!refreshEventStreams.size)
+    return
+  const status = getI18nStatus()
+  for (const reply of refreshEventStreams) {
+    try {
+      writeI18nEvent(reply, status)
+    }
+    catch {
+      refreshEventStreams.delete(reply)
+    }
+  }
+}
+
 export async function startServer(opts: StartServerOptions): Promise<{ host: string, port: number }> {
   if (app) {
     throw new Error('Server already running')
@@ -214,6 +234,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   await initRuntimeConfig(opts)
   await ensureRoutesFile()
   await ensureProvidersFile()
+  await ensureI18nFile()
   await initDatabase()
 
   const host = opts.host || '127.0.0.1'
@@ -336,11 +357,32 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     // 立即推送当前 redirect 列表 (REST + ConnectRPC) — inject-patch 初始只含 BASE,
     // 需要 server 就绪后推送完整列表才能拦截 BYOK 路径
     writeRoutesEvents(reply, loadRoutes().redirect)
+    writeI18nEvent(reply)
     reply.hijack()
 
     req.raw.on('close', () => {
       refreshEventStreams.delete(reply)
     })
+  })
+
+  server.get('/byok/i18n', async (req, reply) => {
+    const payload = getI18nPayload()
+    const etag = `"${payload.hash}"`
+    reply.header('ETag', etag).header('Cache-Control', 'no-cache')
+    const cached = req.headers['if-none-match']
+    if (cached === etag || cached === payload.hash)
+      return reply.code(304).send()
+    return payload
+  })
+
+  server.post('/byok/i18n', async (req, reply) => {
+    if (req.headers.origin || !isLoopbackAddress(req.socket.remoteAddress))
+      return reply.code(403).send({ error: 'only local extension hosts may update localization' })
+    const body = req.body as { enabled?: unknown } | null
+    if (typeof body?.enabled === 'boolean')
+      await setI18nEnabled(body.enabled)
+    pushI18nUpdate()
+    return getI18nStatus()
   })
 
   // BYOK 开关 — renderer (glass sidebar) 通过 fetch 调用

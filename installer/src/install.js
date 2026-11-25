@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from 'fs';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { installExtension, isExtensionInstalled } from './extension-embed.js';
 import { hasBackup } from './backup.js';
-import { isInjectCurrent, isInjectPatched, patchInject } from './patch-inject.js';
+import { isInjectCurrent, isInjectPatched, patchInject, prepareWorkbenchPatch } from './patch-inject.js';
 import { inspectAlwaysLocalPatch, patchAlwaysLocal } from './patch-always-local.js';
 import { getAgentHostBackupTargets, isAgentHostPatched, patchAgentHost } from './patch-agent-host.js';
 import { patchKatex } from './patch-katex.js';
@@ -53,8 +53,6 @@ export async function install() {
   const desktopPatched = desktopCode !== null && isInjectCurrent(desktopCode);
   const glassPatched = glassCode === null || isInjectCurrent(glassCode);
   const hookInjected = desktopPatched && glassPatched;
-  // 旧版 ccursor 注入的 hook (修订号过旧) 无法原地升级: 在改动任何文件之前提示走 update
-  const hookOutdated = [desktopCode, glassCode].some(code => code !== null && isInjectPatched(code) && !isInjectCurrent(code));
   const alPatched = inspectAlwaysLocalPatch(paths).fullyPatched;
   const agentHostPatched = isAgentHostPatched(paths);
   const proxy39Ok = !needsProxy39Patch(paths) || isProxy39Patched(paths);
@@ -64,10 +62,10 @@ export async function install() {
     || hasBackup(paths.alwaysLocalSingletonJs) || hasBackup(paths.extensionHostJs)
     || agentHostBackups;
 
-  if (hookOutdated) {
-    warn('Renderer hook was installed by an older ccursor and must be refreshed');
-    warn('Run "ccursor update" to upgrade (uninstall + reinstall, restoring pristine files first)');
-    return;
+  // Check existing hooks before changing the extension or its configuration.
+  for (const [code, label] of [[desktopCode, 'desktop'], [glassCode, 'glass']]) {
+    if (code !== null && isInjectPatched(code) && !isInjectCurrent(code))
+      prepareWorkbenchPatch(code, label, paths);
   }
 
   if (extInstalled && hookInjected && alPatched && agentHostPatched && proxy39Ok && agentGateOk) {

@@ -28,6 +28,18 @@
         "title": "Cursor++: Start/Stop BYOK Server"
       },
       {
+        "command": "cursor2plus.toggleCursorLocalization",
+        "title": "Cursor++: 切换 Cursor 界面汉化"
+      },
+      {
+        "command": "cursor2plus.editLocalization",
+        "title": "Cursor++: 编辑自定义汉化词典"
+      },
+      {
+        "command": "cursor2plus.installZhLanguagePack",
+        "title": "Cursor++: 安装官方中文包或切换显示语言"
+      },
+      {
         "command": "cursor2plus.editRoutes",
         "title": "Cursor++: Edit Routes"
       },
