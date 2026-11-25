@@ -9,14 +9,13 @@ const AUTH_KINDS = [
 export function ProviderFields() {
   return (
     <>
-      <h3 class="connection-title">连接配置</h3>
+      <h3 class="connection-title" id="provider-connection-title">连接配置</h3>
       <div class="field provider-presets" x-show="$store.app.canApplyProviderPreset(p.id)" x-cloak>
         <div class="provider-preset-grid" role="group" aria-label="服务商预设">
           <button type="button" class="ghost provider-preset" x-on:click="document.getElementById('provider-url-' + p.id)?.focus()">
             <span class="provider-preset-icon" aria-hidden="true">+</span>
             <span class="provider-preset-text">
               <strong>自定义</strong>
-              <small>手动填写地址</small>
             </span>
           </button>
           {PROVIDER_PRESETS.map(preset => (
@@ -53,6 +52,7 @@ export function ProviderFields() {
           <label x-bind:for="'provider-url-' + p.id">服务地址</label>
           <input
             type="text"
+            class="provider-address"
             inputmode="url"
             x-bind:id="'provider-url-' + p.id"
             placeholder="https://api.example.com"

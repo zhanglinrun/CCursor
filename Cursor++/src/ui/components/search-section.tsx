@@ -36,17 +36,17 @@ export function WebToolsButton() {
 export function WebToolsDialog() {
   return (
     <Modal showExpr="$store.app.webToolsOpen" title="联网工具">
-      <div class="wt-tabs">
+      <div class="wt-tabs" role="group" aria-label="联网工具类型">
         <button
-          class="wt-tab"
-          x-bind:class="{ active: $store.app.webToolsTab === 'search' }"
+          type="button"
+          x-bind:aria-pressed="$store.app.webToolsTab === 'search'"
           x-on:click="$store.app.webToolsTab = 'search'"
         >
           搜索
         </button>
         <button
-          class="wt-tab"
-          x-bind:class="{ active: $store.app.webToolsTab === 'fetch' }"
+          type="button"
+          x-bind:aria-pressed="$store.app.webToolsTab === 'fetch'"
           x-on:click="$store.app.webToolsTab = 'fetch'"
         >
           网页抓取
@@ -94,12 +94,11 @@ export function WebToolsDialog() {
                       x-bind:value={`$store.app.getSearchProviderBaseUrl('${sp.type}')`}
                       x-on:input={`$store.app.setSearchProviderBaseUrl('${sp.type}', $event.target.value)`}
                       autocomplete="off"
-                      style="margin-top:4px"
                     />
                     <div class="search-provider-actions">
                       <button
                         type="button"
-                        class="search-test-btn"
+                        class="secondary search-test-btn"
                         x-on:click={`$store.app.testSearchProvider('${sp.type}')`}
                         x-bind:disabled="$store.app.searchTesting"
                       >
@@ -108,6 +107,7 @@ export function WebToolsDialog() {
                       </button>
                       <span
                         class="search-test-result"
+                        role="status"
                         x-bind:class="'level-' + ($store.app.searchTestResult?.level || 'none')"
                         x-text="$store.app.searchTestResult?.text || ''"
                       />
@@ -142,7 +142,7 @@ export function WebToolsDialog() {
               />
             </div>
           </div>
-          <div class="search-options" style="border-top:none;padding-top:0;margin-top:8px">
+          <div class="search-fallback">
             <label
               class="check"
               title="所有已配置的搜索服务均失败时，尝试使用 DuckDuckGo 搜索。"
@@ -187,7 +187,7 @@ export function WebToolsDialog() {
                   </div>
                   <button
                     type="button"
-                    class="fetch-provider-goto-search"
+                    class="secondary fetch-provider-goto-search"
                     x-on:click="$store.app.webToolsTab = 'search'"
                   >
                     前往「搜索」页配置
@@ -195,7 +195,7 @@ export function WebToolsDialog() {
                   <div class="search-provider-actions">
                     <button
                       type="button"
-                      class="search-test-btn"
+                      class="secondary search-test-btn"
                       x-on:click="$store.app.testFetchProvider()"
                       x-bind:disabled="$store.app.fetchTesting"
                     >
@@ -204,6 +204,7 @@ export function WebToolsDialog() {
                     </button>
                     <span
                       class="search-test-result"
+                      role="status"
                       x-bind:class="'level-' + ($store.app.fetchTestResult?.level || 'none')"
                       x-text="$store.app.fetchTestResult?.text || ''"
                     />
@@ -216,8 +217,8 @@ export function WebToolsDialog() {
       </div>
 
       <div class="search-dialog-actions">
-        <button type="button" x-on:click="$store.app.saveWebTools()">保存</button>
         <button type="button" class="ghost" x-on:click="$store.app.webToolsOpen = false">取消</button>
+        <button type="button" x-on:click="$store.app.saveWebTools()">保存</button>
       </div>
     </Modal>
   )

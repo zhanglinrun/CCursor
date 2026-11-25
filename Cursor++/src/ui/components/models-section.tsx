@@ -4,7 +4,7 @@ export function ModelsSection() {
   return (
     <section
       class="models-section"
-      x-bind:aria-labelledby="'models-title-' + p.id"
+      aria-label="服务模型"
       x-data="{ pasteOpen: false, pastedIds: '', customId: '', chosenQuery: '', removing: false, removeIds: [], get modelIds() { return ($store.app.getDraft(p.id).models || []).map(model => model.id) } }"
       x-effect="if (removing) { const active = new Set(modelIds); const current = removeIds.filter(id => active.has(id)); if (current.length !== removeIds.length) removeIds = current; if (!active.size) removing = false }"
     >
@@ -14,20 +14,20 @@ export function ModelsSection() {
         x-effect="configured = $store.app.configuredModelIds(p.id); const available = new Set($store.app.remoteModels[p.id]?.models?.map(model => model.id)); const current = selected.filter(id => available.has(id) && !configured.has(id)); if (current.length !== selected.length) selected = current"
       >
         <div class="models-header">
-          <h3 class="models-title" x-bind:id="'models-title-' + p.id">可用模型</h3>
+          <h3 class="models-title">可用模型</h3>
           <div class="models-header-actions">
             <button type="button" class="ghost" x-show="$store.app.remoteModels[p.id]?.models?.length" x-on:click="$store.app.dismissRemoteModels(p.id); query = ''">关闭列表</button>
             <button type="button" class="secondary" x-bind:disabled="!!$store.app.remoteModels[p.id]?.loading" x-on:click="$store.app.fetchRemoteModels(p.id, listProtocol)" x-text="$store.app.remoteModels[p.id]?.loading ? '获取中…' : '获取列表'">获取列表</button>
           </div>
         </div>
-        <div class="model-search">
+        <div class="model-search" x-show="$store.app.remoteModels[p.id]?.models?.length" x-cloak>
           <svg class="model-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4" />
             <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
           <input type="search" aria-label="搜索可用模型" placeholder="搜索模型名称或 ID" x-model="query" x-bind:disabled="!$store.app.remoteModels[p.id]?.models?.length" />
         </div>
-        <p class="model-empty" x-show="!$store.app.remoteModels[p.id]">获取服务商提供的模型列表。</p>
+        <p class="model-empty" x-show="!$store.app.remoteModels[p.id]">从服务商获取模型后即可选择导入。</p>
         <p class="model-list-recovery" role="status" x-show="$store.app.remoteModels[p.id]?.error || $store.app.remoteModels[p.id]?.models?.length === 0" x-bind:class="{ err: $store.app.remoteModels[p.id]?.error }" x-text="$store.app.remoteModels[p.id]?.error || '服务商没有返回可用模型'" x-cloak></p>
 
         <template x-if="$store.app.remoteModels[p.id]?.models?.length">
@@ -75,7 +75,7 @@ export function ModelsSection() {
             <button type="button" class="ghost" x-show="modelIds.length" x-bind:aria-pressed="removing" x-on:click="removing = !removing; removeIds = []; chosenQuery = ''" x-text="removing ? '退出多选' : '批量删除'"></button>
           </div>
         </div>
-        <div class="model-search" x-show="!removing">
+        <div class="model-search" x-show="!removing && modelIds.length" x-cloak>
           <svg class="model-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4" />
             <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
@@ -109,7 +109,7 @@ export function ModelsSection() {
           <button type="button" class="tiny secondary" x-on:click="removeIds = removeIds.length === modelIds.length ? [] : [...modelIds]" x-text="removeIds.length === modelIds.length ? '取消全选' : '全选模型'"></button>
           <button type="button" class="danger" x-bind:disabled="!removeIds.length" x-on:click="$store.app.requestRemoveModels(p.id, removeIds)">删除所选</button>
         </div>
-        <div class="configured-models-list">
+        <div class="configured-models-list" x-show="modelIds.length">
           <template x-for="m in $store.app.filteredConfiguredModels(p.id, chosenQuery)" x-bind:key="m.id">
             <ModelCard />
           </template>

@@ -1,10 +1,18 @@
 import type { Expression } from 'acorn'
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, openSync, readFileSync, readSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseExpressionAt } from 'acorn'
 
-function containsMarker(file: string, marker: string): boolean {
+export type RoutingPatchReason = 'missing_renderer' | 'missing_always_local' | 'hash_mismatch' | 'unreadable'
+
+type RoutingPatchInspection = { present: true } | { present: false, reason: RoutingPatchReason }
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+function containsMarker(file: string, marker: string, optional = false): boolean {
   try {
     const fd = openSync(file, 'r')
     try {
@@ -16,8 +24,10 @@ function containsMarker(file: string, marker: string): boolean {
       closeSync(fd)
     }
   }
-  catch {
-    return false
+  catch (error) {
+    if (isMissing(error))
+      return optional
+    throw error
   }
 }
 
@@ -33,24 +43,33 @@ function hasSyncedAlwaysLocalHash(appRoot: string, agentMainPath: string): boole
     hostSource = readFileSync(extensionHostJs, 'utf8')
   }
   catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+    if (isMissing(error))
+      return true
+    throw error
   }
-  try {
-    const entryMatch = /(['"])(?:[^'"\r\n]+\.)?cursor-always-local\1\s*:\s*\{/.exec(hostSource)
-    if (!entryMatch) {
-      const enforcesHash = hostSource.includes('checking expected hashes for') || hostSource.includes('Hash mismatch for files:')
-      return !enforcesHash
+
+  const matches = hostSource.matchAll(/(['"])(?:[^'"\r\n]+\.)?cursor-always-local\1\s*:\s*\{/g)
+  let foundEntry = false
+  let actualHash: string | undefined
+  for (const match of matches) {
+    foundEntry = true
+    let node: Expression
+    try {
+      node = parseExpressionAt(hostSource, match.index + match[0].length - 1, { ecmaVersion: 'latest' })
     }
-    const entry = parseExpressionAt(hostSource, entryMatch.index + entryMatch[0].length - 1, { ecmaVersion: 'latest' })
+    catch {
+      continue
+    }
+    // Acorn can consume the next key after the comma as part of a sequence.
+    const entry = node.type === 'SequenceExpression' ? node.expressions[0] : node
     const mainHash = objectProperty(objectProperty(entry, 'dist'), 'main.js')
     if (mainHash?.type !== 'Literal' || typeof mainHash.value !== 'string')
-      return false
-    const actualHash = createHash('sha256').update(readFileSync(agentMainPath)).digest('hex')
-    return mainHash.value.toLowerCase() === actualHash
+      continue
+    actualHash ??= createHash('sha256').update(readFileSync(agentMainPath)).digest('hex')
+    if (mainHash.value.toLowerCase() === actualHash)
+      return true
   }
-  catch {
-    return false
-  }
+  return !foundEntry && !hostSource.includes('checking expected hashes for') && !hostSource.includes('Hash mismatch for files:')
 }
 
 function objectProperty(node: Expression | undefined, name: string): Expression | undefined {
@@ -67,14 +86,26 @@ function objectProperty(node: Expression | undefined, name: string): Expression 
   return undefined
 }
 
-export function hasCursorRoutingPatch(appRoot: string): boolean {
+export function inspectCursorRoutingPatch(appRoot: string): RoutingPatchInspection {
   const workbench = join(appRoot, 'out', 'vs', 'workbench')
   const desktop = join(workbench, 'workbench.desktop.main.js')
   const glass = join(workbench, 'workbench.glass.main.js')
   const agent = join(appRoot, 'extensions', 'cursor-always-local', 'dist', 'main.js')
   const hook = '/* CURSOR-BYOK-HOOK-START */'
-  return containsMarker(desktop, hook)
-    && (!existsSync(glass) || containsMarker(glass, hook))
-    && containsMarker(agent, '__byokUrlRewrite')
-    && hasSyncedAlwaysLocalHash(appRoot, agent)
+  try {
+    if (!containsMarker(desktop, hook) || !containsMarker(glass, hook, true))
+      return { present: false, reason: 'missing_renderer' }
+    if (!containsMarker(agent, '__byokUrlRewrite'))
+      return { present: false, reason: 'missing_always_local' }
+    if (!hasSyncedAlwaysLocalHash(appRoot, agent))
+      return { present: false, reason: 'hash_mismatch' }
+    return { present: true }
+  }
+  catch {
+    return { present: false, reason: 'unreadable' }
+  }
+}
+
+export function hasCursorRoutingPatch(appRoot: string): boolean {
+  return inspectCursorRoutingPatch(appRoot).present
 }

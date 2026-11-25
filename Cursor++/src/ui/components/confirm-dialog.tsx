@@ -32,7 +32,7 @@ export function ConfirmDialog() {
             <div class="confirm-actions">
               <button
                 type="button"
-                class="secondary"
+                class="ghost"
                 x-ref="cancelAction"
                 {...{ 'x-on:click': '$store.app.cancelConfirm()' }}
               >

@@ -80,7 +80,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private context: vscode.ExtensionContext
   private disposeStateListener?: vscode.Disposable
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, private readonly syncRoutingPatchStatus: () => void) {
     this.context = context
   }
 
@@ -131,18 +131,22 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
       return catalogRefresh
     }
+    const refreshPanel = async () => {
+      this.syncRoutingPatchStatus()
+      void refreshStaleCatalog()
+      await refreshState()
+      void webviewView.webview.postMessage({ type: 'refreshUsage' })
+    }
     const visibility = webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible)
-        void refreshStaleCatalog()
+        void refreshPanel().catch(error => logger.warn({ error }, '[UI] panel refresh failed'))
     })
     webviewView.onDidDispose(() => visibility.dispose())
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
         case 'ready':
-          await refreshState()
-          this.postState()
-          void refreshStaleCatalog()
+          await refreshPanel()
           break
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
@@ -152,6 +156,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break
         case 'injectRouting':
           await vscode.commands.executeCommand('cursor2plus.injectRouting')
+          break
+        case 'recheckRouting':
+          await vscode.commands.executeCommand('cursor2plus.recheckRouting')
           break
         case 'toggleServer':
           await vscode.commands.executeCommand('cursor2plus.serverToggle')

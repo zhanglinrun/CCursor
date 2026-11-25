@@ -10,10 +10,10 @@ export function ToastContainer() {
           class="toast"
           {...{
             'x-bind:class': '\'toast-\' + t.level',
-            'x-text': 't.text',
-            'x-on:click': '$store.app.dismissToast(t.id)',
           }}
         >
+          <span role="status" x-text="t.text"></span>
+          <button type="button" class="ghost toast-close" aria-label="关闭通知" x-on:click="$store.app.dismissToast(t.id)">&times;</button>
         </div>
       </template>
     </div>

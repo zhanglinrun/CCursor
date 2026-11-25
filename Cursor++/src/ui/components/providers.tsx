@@ -41,8 +41,8 @@ export function Providers() {
               >
               </button>
               <div class="service-sort" x-show="$store.app.baseProvider(p.id) && $store.app.state.providers.length > 1" x-cloak>
-                <button type="button" class="sort-btn" aria-label="上移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, -1)" x-show="index > 0">▲</button>
-                <button type="button" class="sort-btn" aria-label="下移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, 1)" x-show="index < $store.app.state.providers.length - 1">▼</button>
+                <button type="button" class="sort-btn sort-up" aria-label="上移服务" title="上移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, -1)" x-show="index > 0"></button>
+                <button type="button" class="sort-btn sort-down" aria-label="下移服务" title="下移服务" x-bind:disabled="Object.keys($store.app.savingProviders).length > 0" x-on:click="$store.app.moveProvider(p.id, 1)" x-show="index < $store.app.state.providers.length - 1"></button>
               </div>
             </div>
           </template>

@@ -5,12 +5,13 @@ export function Footer() {
       <details class="footer-advanced">
         <summary>高级设置</summary>
         <div class="footer-row">
-          <button class="secondary" x-on:click="$store.app.post('editRoutes')">编辑路由配置</button>
-          <button class="secondary" x-on:click="$store.app.post('editProvidersJson')">编辑服务商 JSON</button>
+          <button type="button" class="secondary" x-on:click="$store.app.post('editRoutes')">编辑路由配置</button>
+          <button type="button" class="secondary" x-on:click="$store.app.post('editProvidersJson')">编辑服务商 JSON</button>
           <button type="button" class="secondary" x-on:click="$store.app.post('injectRouting')">重新注入</button>
         </div>
       </details>
       <button
+        type="button"
         class="secondary footer-update"
         x-text="$store.app.updateButtonLabel"
         x-bind:disabled="$store.app.updatePhase !== ''"

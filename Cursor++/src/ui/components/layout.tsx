@@ -36,22 +36,21 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <StyleSheet css={codiconCss + styles} />
       </head>
-      <body x-data>
+      <body class="panel-shell" x-data>
         <Banner />
 
-        {/*
-          两个子界面：仪表盘（默认）与配置。
-          默认落在仪表盘，是因为打开面板最常见的诉求是确认"通不通、省了多少"，
-          而不是改配置；需要改配置时切一次即可，改完切回来立刻能看到变化。
-        */}
-        <div class="tabs" role="tablist">
+        <div class="tabs" role="tablist" aria-label="Cursor++">
           <button
             type="button"
             class="tab"
             role="tab"
-            x-bind:class="{ 'active': $store.app.activeTab === 'dashboard' }"
+            id="dashboard-tab"
+            aria-controls="dashboard-panel"
+            x-ref="dashboardTab"
             x-bind:aria-selected="$store.app.activeTab === 'dashboard'"
+            x-bind:tabindex="$store.app.activeTab === 'dashboard' ? 0 : -1"
             x-on:click="$store.app.setTab('dashboard')"
+            {...{ 'x-on:keydown.left.prevent': '$refs.configTab.click(); $refs.configTab.focus()', 'x-on:keydown.right.prevent': '$refs.configTab.click(); $refs.configTab.focus()' }}
           >
             仪表盘
           </button>
@@ -59,24 +58,27 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
             type="button"
             class="tab"
             role="tab"
-            x-bind:class="{ 'active': $store.app.activeTab === 'config' }"
+            id="config-tab"
+            aria-controls="config-panel"
+            x-ref="configTab"
             x-bind:aria-selected="$store.app.activeTab === 'config'"
+            x-bind:tabindex="$store.app.activeTab === 'config' ? 0 : -1"
             x-on:click="$store.app.setTab('config')"
+            {...{ 'x-on:keydown.left.prevent': '$refs.dashboardTab.click(); $refs.dashboardTab.focus()', 'x-on:keydown.right.prevent': '$refs.dashboardTab.click(); $refs.dashboardTab.focus()' }}
           >
             服务配置
           </button>
         </div>
 
-        {/* ── 仪表盘 ── */}
-        <div class="dashboard-page" x-show="$store.app.activeTab === 'dashboard'">
-          <Server />
-          <UsageDashboard />
-        </div>
-
-        {/* ── 配置 ── */}
-        <div class="config-page" x-show="$store.app.activeTab === 'config'" x-cloak>
-          <Providers />
-        </div>
+        <main>
+          <div class="dashboard-page" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab" x-show="$store.app.activeTab === 'dashboard'">
+            <Server />
+            <UsageDashboard />
+          </div>
+          <div class="config-page" id="config-panel" role="tabpanel" aria-labelledby="config-tab" x-show="$store.app.activeTab === 'config'" x-cloak>
+            <Providers />
+          </div>
+        </main>
 
         <WebToolsDialog />
         <ConfirmDialog />

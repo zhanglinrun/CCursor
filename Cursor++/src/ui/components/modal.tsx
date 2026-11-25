@@ -6,11 +6,11 @@
  */
 export function Modal({ showExpr, title, children }: { showExpr: string, title: string, children: any }) {
   return (
-    <div class="modal-backdrop" x-show={showExpr} x-cloak {...{ 'x-on:click.self': `${showExpr} = false` }}>
-      <div class="modal-dialog">
+    <div class="modal-backdrop" x-show={showExpr} x-cloak {...{ 'x-on:click.self': `${showExpr} = false`, 'x-on:keydown.escape.window': `if (${showExpr} && !$store.app.confirmDialog) ${showExpr} = false` }}>
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-label={title}>
         <div class="modal-header">
           <span class="modal-title">{title}</span>
-          <button type="button" class="modal-close" aria-label="关闭" x-on:click={`${showExpr} = false`}>&times;</button>
+          <button type="button" class="ghost modal-close" aria-label="关闭" x-on:click={`${showExpr} = false`}>&times;</button>
         </div>
         <div class="modal-body">
           {children}

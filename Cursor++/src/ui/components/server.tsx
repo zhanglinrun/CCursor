@@ -11,18 +11,18 @@ export function Server() {
           }"
         >
         </span>
-        <div>
-          <h2 id="dashboard-service-title">本地服务</h2>
-          <p role="status" x-text="$store.app.serverLabel"></p>
-        </div>
+        <h2 id="dashboard-service-title">本地服务</h2>
+        <span class="dashboard-port" x-text="':' + ($store.app.state?.port ?? '')"></span>
       </div>
+      <p class="dashboard-service-caption" role="status" x-text="$store.app.serverLabel"></p>
       <div class="dashboard-service-actions">
         <span class="dashboard-version" x-show="$store.app.state?.version" x-text="'v' + ($store.app.state?.version || '')"></span>
         <button
           type="button"
           class="secondary dashboard-action"
           x-show="$store.app.state?.server === 'local' || $store.app.state?.server === 'offline'"
-          x-text="$store.app.state?.server === 'local' ? '停止服务' : '启动服务'"
+          x-text="$store.app.state?.server === 'local' ? '停止' : '启动'"
+          x-bind:aria-label="$store.app.state?.server === 'local' ? '停止本地服务' : '启动本地服务'"
           x-bind:disabled="$store.app.state?.serverIssue === 'port_occupied'"
           x-bind:title="$store.app.state?.serverIssue === 'port_occupied' ? '端口已被其他程序占用' : ''"
           x-on:click="$store.app.post('toggleServer')"

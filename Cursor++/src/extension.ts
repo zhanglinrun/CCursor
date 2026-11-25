@@ -2,7 +2,7 @@ import type { ByokMode } from './server/data/defaults'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
-import { hasCursorRoutingPatch } from './cursor-routing'
+import { inspectCursorRoutingPatch } from './cursor-routing'
 import { registerRoutingRestart } from './routing-restart'
 import { bumpRefreshSignal, bumpRefreshSignalForModeChange, pushRoutesUpdate, startServer, stopServer } from './server'
 import { getServerConfig } from './server/config'
@@ -15,7 +15,7 @@ import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntim
 import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
-import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState, setRoutingPatchPresent } from './ui/state'
+import { getState, onStateChange, probeByokServer, refreshState, requestByokServerTakeover, setFileLogState, setRoutingPatchStatus } from './ui/state'
 import { startUpdateCheck, stopUpdateCheck } from './update-check'
 import { EXTENSION_VERSION, isNewerVersion } from './version'
 
@@ -386,12 +386,21 @@ function stopHeartbeat() {
 //
 // 点击 → toggle BYOK Mode (非 server)。Server 启停走命令面板/侧边栏。
 
+function syncRoutingPatchStatus(): boolean {
+  const wasMissing = getState().routingPatchPresent === false
+  const inspection = inspectCursorRoutingPatch(vscode.env.appRoot)
+  setRoutingPatchStatus(inspection.present, 'reason' in inspection ? inspection.reason : undefined)
+  if (wasMissing && inspection.present)
+    void disableStartupConnectTransport()
+  return inspection.present
+}
+
 function renderStatusBar() {
   const s = getState()
   if (s.routingPatchPresent === false) {
     statusBarItem.text = '$(warning) Cursor++'
-    statusBarItem.tooltip = '尚未检测到 Cursor 路由补丁。点击重新注入。'
-    statusBarItem.command = 'cursor2plus.injectRouting'
+    statusBarItem.tooltip = 'Cursor 路由补丁检查未通过。点击重新检测。'
+    statusBarItem.command = 'cursor2plus.recheckRouting'
     statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground')
     return
   }
@@ -593,9 +602,6 @@ async function doStartServer() {
 
 export async function activate(context: vscode.ExtensionContext) {
   setCursorAppRoot(vscode.env.appRoot)
-  const routingPatchPresent = hasCursorRoutingPatch(vscode.env.appRoot)
-  setRoutingPatchPresent(routingPatchPresent)
-  registerRoutingRestart(context)
   outputChannel = vscode.window.createOutputChannel('Cursor++', { log: true })
   initLogger((level, msg) => writeToChannel({ level, msg }))
   setupSupermarkdownNativeTip()
@@ -610,9 +616,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 状态变化 → 刷新状态栏
   context.subscriptions.push(onStateChange(() => renderStatusBar()))
+  syncRoutingPatchStatus()
+  registerRoutingRestart(context, syncRoutingPatchStatus)
 
   // 侧边栏面板
-  const panelProvider = new PanelProvider(context)
+  const panelProvider = new PanelProvider(context, syncRoutingPatchStatus)
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider),
   )
@@ -623,13 +631,12 @@ export async function activate(context: vscode.ExtensionContext) {
    * 只有状态实际变化时才推送路由、刷新模型列表、弹出提示; 重复请求为空操作。
    */
   async function applyByokRequest(target: ByokMode | 'toggle', source: string): Promise<void> {
-    if (!routingPatchPresent && target !== 0) {
+    if (target !== 0 && !getState().routingPatchPresent && !syncRoutingPatchStatus()) {
       await vscode.commands.executeCommand('cursor2plus.injectRouting')
       return
     }
     const { routes: next, changed } = await requestByokMode(target, source)
     await refreshState()
-    renderStatusBar()
     if (!changed)
       return
     // 开启 BYOK 时同步关掉主进程的启动期 fetch 通道 (见 disableStartupConnectTransport)
@@ -647,6 +654,12 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('cursor2plus.recheckRouting', () => {
+      if (syncRoutingPatchStatus())
+        void vscode.window.showInformationMessage('路由补丁状态正常')
+      else
+        void vscode.window.showWarningMessage('仍检测到补丁缺失或哈希未同步')
+    }),
     vscode.commands.registerCommand('cursor2plus.serverToggle', () => toggleServer()),
     // 旧入口 (命令面板 / 快捷键): 翻转语义, 500ms 防抖
     vscode.commands.registerCommand('cursor2plus.toggleByok', () => applyByokRequest('toggle', 'command:toggle')),
@@ -672,7 +685,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // 确保配置文件存在 —— 即使 server 未启动,面板也能读写
   await ensureRoutesFile()
   await ensureProvidersFile()
-  log('info', `[ROUTING] ${routingPatchPresent ? 'Cursor routing patch detected' : 'Cursor routing patch not detected'}`)
+  const { routingPatchPresent, routingPatchReason } = getState()
+  log('info', `[ROUTING] ${routingPatchPresent ? 'Cursor routing patch detected' : `Cursor routing patch not detected (${routingPatchReason})`}`)
 
   // BYOK 开启时必须关掉主进程的启动期 fetch 通道,否则官方模型列表会绕过本地路由
   await disableStartupConnectTransport()

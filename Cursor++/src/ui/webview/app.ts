@@ -289,12 +289,27 @@ export function initApp(Alpine: AlpineType) {
       if (!s)
         return ''
       if (s.server === 'local')
-        return `当前窗口运行中 · 端口 ${s.port}`
+        return '当前窗口运行中'
       if (s.server === 'remote')
-        return `其他窗口运行中 · 端口 ${s.port}`
+        return '其他窗口运行中'
       if (s.serverIssue === 'port_occupied')
-        return `端口 ${s.port} 已被其他程序占用`
-      return '服务未运行'
+        return '端口被占用'
+      return '已停止'
+    },
+
+    get routingPatchHint(): string {
+      switch (this.state?.routingPatchReason) {
+        case 'missing_renderer':
+          return 'Cursor 界面的路由补丁缺失。'
+        case 'missing_always_local':
+          return '内置扩展的路由补丁缺失。'
+        case 'hash_mismatch':
+          return '内置扩展文件与校验哈希未同步。'
+        case 'unreadable':
+          return '无法读取 Cursor 安装文件。'
+        default:
+          return '路由补丁尚未就绪。'
+      }
     },
 
     // ── Draft 管理 ──
@@ -732,7 +747,7 @@ export function initApp(Alpine: AlpineType) {
      * 区间右端取真实的最晚记录时间，不是"今天"：几天没用时显示"截至今天"会
      * 让人以为数据是新的。
      */
-    usageScopeSubtitle(scope: 'today' | 'allTime'): string {
+    usageScopeSubtitle(scope: 'today' | 'allTime', compact = false): string {
       const stamp = (timestamp: number): string => {
         const date = new Date(timestamp)
         const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -745,17 +760,21 @@ export function initApp(Alpine: AlpineType) {
         const todayKey = this.usageStats?.byDay?.length
           ? this.usageStats.byDay[this.usageStats.byDay.length - 1]?.date
           : null
-        return todayKey ? String(todayKey) : ''
+        return todayKey ? (compact ? todayKey.slice(5) : todayKey) : ''
       }
 
       const { firstRecordAt, lastRecordAt } = this.usageStats ?? {}
       if (!firstRecordAt)
         return ''
-      // 只有一天数据时给单个日期，`09-17 → 09-17` 是废话
-      if (!lastRecordAt || lastRecordAt === firstRecordAt)
-        return stamp(firstRecordAt)
-      const last = stamp(lastRecordAt)
       const first = stamp(firstRecordAt)
+      const last = lastRecordAt ? stamp(lastRecordAt) : first
+      if (compact) {
+        if (first === last)
+          return first.slice(5)
+        return first.slice(0, 4) === last.slice(0, 4)
+          ? `${first.slice(5)}–${last.slice(5)}`
+          : `${first.slice(2, 7)}–${last.slice(2, 7)}`
+      }
       return first === last ? first : `${first} 至 ${last}`
     },
 
@@ -1803,6 +1822,10 @@ export function initApp(Alpine: AlpineType) {
         s.usageBootstrapped = true
         s.loadUsageStats()
       }
+    }
+    else if (msg?.type === 'refreshUsage') {
+      if (s.activeTab === 'dashboard')
+        s.loadUsageStats()
     }
     else if (msg?.type === 'saveProvidersResult') {
       if (msg.state) {

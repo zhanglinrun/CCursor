@@ -8,6 +8,17 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.12 — 修复「已注入仍提示重新注入」误报与控制面板 UI 全面重设计
+
+- 修复已正常注入补丁的 Cursor（含 3.31.15 / 3.32.4）在面板与状态栏仍误报「需要先注入路由补丁」的问题：
+  - 根因：`cursor-routing.ts` 使用 `acorn.parseExpressionAt` 解析 `extensionHostProcess.js` 中的 `cursor-always-local` 条目时，因条目后紧跟逗号与下一扩展键，Acorn 返回了 `SequenceExpression` 而非 `ObjectExpression`，导致 `dist/main.js` 哈希读取失败并始终判定为缺失。
+  - 修复：解包 `SequenceExpression` 并扫描全部匹配条目；新增 `inspectCursorRoutingPatch` 区分 `missing_renderer` / `missing_always_local` / `hash_mismatch` / `unreadable` 具体原因。
+  - 优化状态同步逻辑：`extension.ts` / `state.ts` / `panel-provider.ts` 不再把补丁状态冻结在启动闭包内；打开面板、侧栏重新可见、启用 BYOK 或点击「重新检测」时自动复查补丁状态、同步状态栏并刷新用量。
+- 全面重设计侧边栏控制面板 UI（深/浅双主题与 260–960px 响应式适配）：
+  - 顶部状态条去除重复警告图标与厚重色块，改用单图标 + 状态胶囊 + 清晰诊断文案与「重新注入 / 重新检测」按钮组。
+  - 重排本地服务条为单条紧凑卡片，消除窄栏折行空白；仪表盘去除「框套框」改为细发丝分隔的三列指标带，大幅收紧纵向高度并将「近 7 天 / 近 14 天」并入输入趋势头部。
+  - 统一服务商列表、编辑器表单、模型卡片、联网工具、弹窗及底部折叠栏（自定义平滑旋转箭头）的极简 Cursor 原生质感。
+
 ## 0.1.11 — 修复多处 `nal_websocket_client` 字面量导致注入失败并全面加固路由注入管线
 
 - 修复部分 Cursor 构建中 `cursor-always-local/dist/main.js` 含多处 `nal_websocket_client` 字面量导致注入报错（`expected one nal_websocket_client gate literal, found 2`）的问题：

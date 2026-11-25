@@ -84,10 +84,10 @@ export function ModelCard() {
           {...{ 'x-on:click.stop': '' }}
         >
         </span>
-        <button class="model-open ghost" type="button" x-bind:aria-expanded="!!$store.app.modelExpanded[p.id]?.[m.id]" x-bind:aria-controls="'model-settings-' + m.id" x-on:click="$store.app.toggleModelExpand(p.id, m.id)">
+        <button class="model-open ghost" type="button" x-bind:aria-expanded="!!$store.app.modelExpanded[p.id]?.[m.id]" x-bind:aria-controls="'model-settings-' + m.id" x-bind:aria-label="'配置 ' + (m.displayName || m.apiModel || '未命名模型')" x-on:click="$store.app.toggleModelExpand(p.id, m.id)">
+          <span class="model-chevron" aria-hidden="true"></span>
           <span class="model-title" x-bind:title="m.apiModel" x-text="m.displayName || m.apiModel || '未命名模型'"></span>
           <span class="model-summary" x-show="m.contextTokenLimit || m.maxOutputTokens" x-text="[$store.app.fmtCtx(m.contextTokenLimit), $store.app.fmtCtx(m.maxOutputTokens)].join(' / ')" title="上下文 / 最大输出（Token）"></span>
-          <span class="model-open-label" x-text="$store.app.modelExpanded[p.id]?.[m.id] ? '收起' : '高级'"></span>
         </button>
         {/* 测试结果徽标 —— 未测试时不渲染, 保持列表干净; 点击即重测或取消 */}
         <template x-if="$store.app.modelTestSummary(m.id)">
@@ -226,7 +226,7 @@ export function ModelCard() {
           <template x-if="$store.app.modelTest(m.id)?.result">
             <div class="test-card" x-bind:class="{ 'test-card-bad': $store.app.modelTestTone(m.id) === 'bad', 'test-card-idle': $store.app.modelTestTone(m.id) === 'idle' }">
               <div class="test-card-head">
-                <span class="test-card-summary" x-text="$store.app.modelTestSummary(m.id)"></span>
+                <span class="test-card-summary" role="status" x-text="$store.app.modelTestSummary(m.id)"></span>
                 <button type="button" class="tiny ghost" x-on:click="$store.app.clearModelTest(m.id)">清除结果</button>
               </div>
 
@@ -245,14 +245,14 @@ export function ModelCard() {
               {/* 逐个协议的失败原因 —— 全部打不通时, 信息量远比"只有一种能通"大 */}
               <template x-if="$store.app.modelTest(m.id).result.status !== 'success' && $store.app.protocolDetections[m.id]?.attempts?.length">
                 <details class="test-raw">
-                  <summary>Per-protocol attempts</summary>
+                  <summary>各协议的测试结果</summary>
                   <pre x-text="$store.app.protocolAttemptsText(m.id)"></pre>
                 </details>
               </template>
 
               <template x-if="$store.app.modelTestOutput(m.id)">
                 <details class="test-raw">
-                  <summary>Raw response</summary>
+                  <summary>原始响应</summary>
                   <pre x-text="$store.app.modelTestOutput(m.id)"></pre>
                 </details>
               </template>

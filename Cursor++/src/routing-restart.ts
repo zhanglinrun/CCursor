@@ -30,7 +30,7 @@ async function readJob(path: string): Promise<RoutingJob | undefined> {
   }
 }
 
-export function registerRoutingRestart(context: vscode.ExtensionContext): void {
+export function registerRoutingRestart(context: vscode.ExtensionContext, onSuccess?: () => void): void {
   const storage = context.globalStorageUri.fsPath
   const jobPath = join(storage, JOB_FILE)
   let requesting = false
@@ -63,10 +63,13 @@ export function registerRoutingRestart(context: vscode.ExtensionContext): void {
         return false
       throw error
     }
-    if (job.status === 'success')
+    if (job.status === 'success') {
+      onSuccess?.()
       void vscode.window.showInformationMessage(job.message || 'Cursor++ 路由补丁已就绪。')
-    else
+    }
+    else {
       void vscode.window.showErrorMessage(job.status === 'pending' ? '上一次重新注入未完成，可以重新尝试。' : job.message)
+    }
     return false
   }
 

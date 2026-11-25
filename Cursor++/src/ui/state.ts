@@ -4,6 +4,7 @@
  * 所有 UI（状态栏、侧边栏面板）从此处读取状态。
  * 状态变化时通过 EventEmitter 通知所有消费方。
  */
+import type { RoutingPatchReason } from '../cursor-routing'
 import type { ByokMode, ProviderEntry } from '../server/data/defaults'
 import * as net from 'node:net'
 import * as vscode from 'vscode'
@@ -26,6 +27,7 @@ export interface AppState {
   port: number
   byokMode: ByokMode
   routingPatchPresent?: boolean
+  routingPatchReason?: RoutingPatchReason
   providers: ProviderEntry[]
   webTools: import('../server/data/defaults').WebToolsConfig
   version: string
@@ -51,7 +53,14 @@ let current: AppState = {
 }
 
 export function setRoutingPatchPresent(present: boolean): void {
-  current = { ...current, routingPatchPresent: present }
+  setRoutingPatchStatus(present)
+}
+
+export function setRoutingPatchStatus(present: boolean, reason?: RoutingPatchReason): void {
+  if (current.routingPatchPresent === present && current.routingPatchReason === reason)
+    return
+  current = { ...current, routingPatchPresent: present, routingPatchReason: reason }
+  emitter.fire(current)
 }
 
 /** 文件日志状态由 extension.ts 注入 (globalState + 实际写入 stream) */
@@ -172,6 +181,7 @@ export async function refreshState(_secrets?: vscode.SecretStorage): Promise<App
     byokMode,
     providers,
     routingPatchPresent: current.routingPatchPresent,
+    routingPatchReason: current.routingPatchReason,
     webTools: getWebTools(),
     version: EXTENSION_VERSION,
     fileLogEnabled: current.fileLogEnabled,
