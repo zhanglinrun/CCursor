@@ -27,26 +27,51 @@ it('detects the missing routing files when Cursor replaces its program files', (
   }
 })
 
-it('detects stale extensionHostProcess hash for cursor-always-local', () => {
+function hashFixture() {
   const app = mkdtempSync(join(tmpdir(), 'cursor-routing-hash-'))
   const renderer = '/* CURSOR-BYOK-HOOK-START */'
   const desktop = join(app, 'out/vs/workbench/workbench.desktop.main.js')
   const agent = join(app, 'extensions/cursor-always-local/dist/main.js')
   const extHost = join(app, 'out/vs/workbench/api/node/extensionHostProcess.js')
-  try {
-    mkdirSync(dirname(desktop), { recursive: true })
-    mkdirSync(dirname(agent), { recursive: true })
-    mkdirSync(dirname(extHost), { recursive: true })
-    writeFileSync(desktop, renderer)
-    const agentContent = 'globalThis.__byokUrlRewrite = true'
-    writeFileSync(agent, agentContent)
-    const actualHash = createHash('sha256').update(agentContent).digest('hex')
+  mkdirSync(dirname(desktop), { recursive: true })
+  mkdirSync(dirname(agent), { recursive: true })
+  mkdirSync(dirname(extHost), { recursive: true })
+  writeFileSync(desktop, renderer)
+  const agentContent = 'globalThis.__byokUrlRewrite = true'
+  writeFileSync(agent, agentContent)
+  const actualHash = createHash('sha256').update(agentContent).digest('hex')
+  return { app, extHost, actualHash }
+}
 
-    writeFileSync(extHost, `var s3={"anysphere.cursor-always-local":{dist:{"main.js":"${'0'.repeat(64)}"}}};`)
+it('requires the cursor-always-local dist/main.js digest even when nested or sibling digests match', () => {
+  const { app, extHost, actualHash } = hashFixture()
+  try {
+    const nested = `sub:{"main.js":"${actualHash}",metadata:{note:"}"}}`
+    const sibling = `"anysphere.cursor-other":{dist:{"main.js":"${actualHash}"}}`
+    writeFileSync(extHost, `var s3={"anysphere.cursor-always-local":{dist:{${nested},"main.js":"${'0'.repeat(64)}"}},${sibling}};`)
     expect(hasCursorRoutingPatch(app)).toBe(false)
 
-    writeFileSync(extHost, `var s3={"anysphere.cursor-always-local":{dist:{"main.js":"${actualHash}"}}};`)
+    writeFileSync(extHost, `var s3={"anysphere.cursor-always-local":{dist:{${nested}}},${sibling}};`)
+    expect(hasCursorRoutingPatch(app)).toBe(false)
+
+    writeFileSync(extHost, `var s3={'anysphere.cursor-always-local':{'dist':{${nested},'main.js':'${actualHash}'}}};`)
     expect(hasCursorRoutingPatch(app)).toBe(true)
+  }
+  finally {
+    rmSync(app, { recursive: true, force: true })
+  }
+})
+
+it('fails closed for an unreadable host or a hash verifier without a matching map entry', () => {
+  const { app, extHost, actualHash } = hashFixture()
+  try {
+    writeFileSync(extHost, `var s3={"anysphere.cursor-other":{dist:{"main.js":"${actualHash}"}}};`)
+    expect(hasCursorRoutingPatch(app)).toBe(true)
+    writeFileSync(extHost, 'const report = "Hash mismatch for files:";')
+    expect(hasCursorRoutingPatch(app)).toBe(false)
+    rmSync(extHost)
+    mkdirSync(extHost)
+    expect(hasCursorRoutingPatch(app)).toBe(false)
   }
   finally {
     rmSync(app, { recursive: true, force: true })

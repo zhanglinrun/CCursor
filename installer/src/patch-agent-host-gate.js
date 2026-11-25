@@ -49,16 +49,19 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
+import { findAgentHostAssignment } from './agent-host-topology.js';
 
 const TAG = 'agent-host-gate';
 
 /** 幂等标记 —— 同时作为"已修补"的检测依据 */
 export const AGENT_HOST_GATE_MARKER = '/*BYOK-AGENT-HOST-GATE-OFF*/';
 
-/** 唯一赋值点 (3.23–3.30: this._agentHostEnabled=, 3.31+: this._topologyEnabled=) */
-const ASSIGN_NEEDLES = ['this._agentHostEnabled=', 'this._topologyEnabled='];
 /** 兜底: 任意字段赋值 */
 const FIELD_NEEDLES = ['_agentHostEnabled=', '_topologyEnabled='];
+
+function findGateAssignment(source) {
+  return findAgentHostAssignment(source) ?? findAgentHostAssignment(source, FIELD_NEEDLES);
+}
 
 /** renderer 目标 (desktop + glass 都可能承载 enablement service) */
 export function getAgentHostGateTargets(paths) {
@@ -74,7 +77,9 @@ function readIfExists(file) {
 
 /** 该源码是否已打上本补丁 */
 export function isAgentHostGatePatched(source) {
-  return typeof source === 'string' && source.includes(AGENT_HOST_GATE_MARKER);
+  if (typeof source !== 'string' || !source.includes(AGENT_HOST_GATE_MARKER)) return false;
+  const found = findGateAssignment(source);
+  return Boolean(found && !found.ambiguous && source.startsWith(`false${AGENT_HOST_GATE_MARKER}`, found.start));
 }
 
 /** 该 Cursor 版本是否带 `cursor_agent_host` 拓扑 (pre-3.23 无此锚点) */
@@ -116,24 +121,10 @@ export function inspectAgentHostGatePatch(paths) {
 
 /** 定位赋值点右侧表达式的 [start, end) */
 function locateRhs(code, label) {
-  let rhsStart = -1;
-  for (const needle of ASSIGN_NEEDLES) {
-    const at = code.indexOf(needle);
-    if (at !== -1) {
-      rhsStart = at + needle.length;
-      break;
-    }
-  }
-  if (rhsStart === -1) {
-    for (const needle of FIELD_NEEDLES) {
-      const at = code.indexOf(needle);
-      if (at !== -1) {
-        rhsStart = at + needle.length;
-        break;
-      }
-    }
-  }
-  if (rhsStart === -1) return null;
+  const found = findGateAssignment(code);
+  if (!found) return null;
+  if (found.ambiguous) throw new Error(`[agent-gate] ${label}: multiple agent host topology assignments`);
+  const { start: rhsStart } = found;
 
   let node;
   try {

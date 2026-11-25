@@ -74,12 +74,12 @@ function scanTurnRoutes(source, label) {
 
 /** 文件是否包含 turn 路由代码 (内容指纹 + 目标字面量) */
 export function hasTurnRouter(source) {
-  return ROUTER_FINGERPRINTS.some(f => source.includes(f)) && source.includes('"managed-local"');
+  return ROUTER_FINGERPRINTS.some(f => source.includes(f)) && /(['"])managed-local\1/.test(source);
 }
 
 /** 可能承载 eligible 分支的文件 (chunk 里不一定带 logger 名, 以字面量预筛) */
 export function mayContainTurnRoute(source) {
-  return source.includes('"managed-local"') && source.includes('"eligible"');
+  return /(['"])managed-local\1/.test(source) && /(['"])eligible\1/.test(source);
 }
 
 export function isTurnRouteGuarded(source, label = 'Agent Host bundle') {

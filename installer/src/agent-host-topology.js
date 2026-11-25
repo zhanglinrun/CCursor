@@ -30,14 +30,32 @@
 import * as acorn from 'acorn';
 
 export const TOPOLOGY_MARKER = '__byokAgentHostTopology';
-// Cursor 3.13–3.30 使用 this._agentHostEnabled=, 3.31+ 改名为 this._topologyEnabled=
 const ASSIGN_NEEDLES = ['this._agentHostEnabled=', 'this._topologyEnabled='];
+const SERVICE_ANCHOR = '[CursorAgentHostEnablementService]';
 
-function findAssignNeedle(source) {
-  for (const needle of ASSIGN_NEEDLES) {
-    if (source.includes(needle)) return needle;
+export function findAgentHostAssignment(source, needles = ASSIGN_NEEDLES) {
+  const matches = [];
+  for (const needle of needles) {
+    let from = 0;
+    while (true) {
+      const at = source.indexOf(needle, from);
+      if (at === -1) break;
+      from = at + needle.length;
+      matches.push({ at, start: from });
+    }
   }
-  return null;
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+
+  const svcAt = source.indexOf(SERVICE_ANCHOR);
+  if (svcAt !== -1) {
+    const nearby = matches.filter(match => Math.abs(match.at - svcAt) <= 1200);
+    // The service logs the effective topology immediately after assigning it.
+    const preceding = nearby.filter(match => match.at < svcAt);
+    if (preceding.length > 0) return preceding.sort((a, b) => b.at - a.at)[0];
+    if (nearby.length === 1) return nearby[0];
+  }
+  return { ambiguous: true };
 }
 
 function parseExpressionAt(source, offset, label, preserveParens = false) {
@@ -53,11 +71,13 @@ function parseExpressionAt(source, offset, label, preserveParens = false) {
 
 /** 该 bundle 是否带拓扑开关 (pre-3.13 无) */
 export function hasAgentHostTopology(source) {
-  return findAssignNeedle(source) !== null;
+  return ASSIGN_NEEDLES.some(needle => source.includes(needle));
 }
 
 export function isAgentHostTopologyGuarded(source) {
-  return ASSIGN_NEEDLES.some(needle => source.includes(`${needle}(/*${TOPOLOGY_MARKER}*/`));
+  if (!source.includes(`/*${TOPOLOGY_MARKER}*/`)) return false;
+  const found = findAgentHostAssignment(source);
+  return Boolean(found && !found.ambiguous && source.startsWith(`(/*${TOPOLOGY_MARKER}*/`, found.start));
 }
 
 /**
@@ -65,14 +85,14 @@ export function isAgentHostTopologyGuarded(source) {
  * @returns {{ start: number, end: number, rhs: string }}
  */
 export function locateTopologyRhs(source, label) {
-  const needle = findAssignNeedle(source);
-  if (!needle) throw new Error(`${label}: agent host topology assignment not found`);
-  const at = source.indexOf(needle);
-  if (source.indexOf(needle, at + needle.length) !== -1) {
+  const found = findAgentHostAssignment(source);
+  if (!found) throw new Error(`${label}: agent host topology assignment not found`);
+  if (found.ambiguous) {
     throw new Error(`${label}: multiple agent host topology assignments (shape changed; installer needs update)`);
   }
-  const start = at + needle.length;
-  const node = parseExpressionAt(source, start, label);
+  const { start } = found;
+  // preserveParens: true 保留外层括号，避免 `this._topologyEnabled=(a||b),log()` 截断闭括号留下孤立 `)`
+  const node = parseExpressionAt(source, start, label, true);
   const rhs = source.slice(start, node.end);
   // 压缩产物里 RHS 是几个局部变量的布尔组合; 过长或跨行说明定位偏了, 宁可不改
   if (!rhs || rhs.length > 200 || rhs.includes('\n')) {

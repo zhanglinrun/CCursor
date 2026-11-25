@@ -24,9 +24,20 @@ function websocketAstInfo(source, label) {
   const gateLiterals = [];
   const acceptedOriginArrays = [];
 
-  walk.simple(ast, {
-    Literal(node) {
-      if (node.value === 'nal_websocket_client') gateLiterals.push(node);
+  walk.ancestor(ast, {
+    Literal(node, _state, ancestors) {
+      if (node.value !== 'nal_websocket_client') return;
+      const parent = ancestors[ancestors.length - 2];
+      if (parent?.type === 'Property' && parent.key === node) return;
+      gateLiterals.push(node);
+    },
+    TemplateLiteral(node, _state, ancestors) {
+      if (node.expressions.length !== 0) return;
+      if (node.quasis.length !== 1 || node.quasis[0]?.value?.cooked !== 'nal_websocket_client') return;
+      const parent = ancestors[ancestors.length - 2];
+      if (parent?.type === 'Property' && parent.key === node) return;
+      if (parent?.type === 'TaggedTemplateExpression') return;
+      gateLiterals.push(node);
     },
     ArrayExpression(node) {
       const values = node.elements
@@ -71,11 +82,10 @@ export function disableAgentWebSocket(source, label = 'Agent network bundle') {
   const info = websocketAstInfo(source, label);
   const edits = [];
 
-  if (!hasGateMarker(source)) {
-    if (info.gateLiterals.length !== 1) {
-      throw new Error(`${label}: expected one nal_websocket_client gate literal, found ${info.gateLiterals.length}`);
-    }
-    const gate = info.gateLiterals[0];
+  if (info.gateLiterals.length === 0 && !hasGateMarker(source)) {
+    throw new Error(`${label}: expected at least one nal_websocket_client gate literal, found 0`);
+  }
+  for (const gate of info.gateLiterals) {
     edits.push({
       start: gate.start,
       end: gate.end,
@@ -83,11 +93,10 @@ export function disableAgentWebSocket(source, label = 'Agent network bundle') {
     });
   }
 
-  if (!hasOriginsMarker(source)) {
-    if (info.acceptedOriginArrays.length !== 1) {
-      throw new Error(`${label}: expected one Agent WebSocket accepted-origin set, found ${info.acceptedOriginArrays.length}`);
-    }
-    const origins = info.acceptedOriginArrays[0];
+  if (info.acceptedOriginArrays.length === 0 && !hasOriginsMarker(source)) {
+    throw new Error(`${label}: expected at least one Agent WebSocket accepted-origin set, found 0`);
+  }
+  for (const origins of info.acceptedOriginArrays) {
     edits.push({
       start: origins.start + 1,
       end: origins.end - 1,
@@ -95,7 +104,13 @@ export function disableAgentWebSocket(source, label = 'Agent network bundle') {
     });
   }
 
-  edits.sort((a, b) => b.start - a.start);
+  edits.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < edits.length; i++) {
+    if (edits[i].start < edits[i - 1].end) {
+      throw new Error(`${label}: overlapping WebSocket guard edits detected`);
+    }
+  }
+  edits.reverse();
   let patched = source;
   for (const edit of edits) patched = patched.slice(0, edit.start) + edit.text + patched.slice(edit.end);
   parseBundle(patched, `${label} (patched)`);

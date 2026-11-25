@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
-import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'fs';
+import { accessSync, constants, existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import * as acorn from 'acorn';
-import { createBackup, hasBackup, restoreBackup } from './backup.js';
+import { createBackup, hasBackup } from './backup.js';
 import { prepareChecksumUpdate } from './checksum.js';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { getAgentHostGateTargets, prepareAgentHostGatePatch } from './patch-agent-host-gate.js';
@@ -14,7 +14,8 @@ import { getProxy39Target, needsProxy39Patch, prepareProxy39Patch } from './patc
 const info = message => console.log(`\x1b[34m[>]\x1b[0m ${message}`);
 const VERIFY_USAGE_NEEDLE = 'checking expected hashes for';
 const VERIFY_MISMATCH_NEEDLE = 'Hash mismatch for files:';
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+const UNINSTALL_TAGS = ['inject', 'always-local', 'agent-host', 'proxy-39', 'katex', 'agent-host-gate'];
 
 export function hasVerifiedHashCheck(source) {
   return typeof source === 'string'
@@ -44,7 +45,7 @@ function hasAnySha256Leaf(node) {
   return false;
 }
 
-function parseVerifiedHashMapAt(source, braceOffset) {
+function parseVerifiedHashMapAt(source, braceOffset, targetIds) {
   if (braceOffset < 0 || source[braceOffset] !== '{') return null;
   let node;
   try {
@@ -56,21 +57,34 @@ function parseVerifiedHashMapAt(source, braceOffset) {
   if (!node || node.type !== 'ObjectExpression' || node.properties.length === 0) return null;
   const looksLikeHashMap = node.properties.some((prop) => {
     const extId = propertyKeyName(prop);
-    if (!extId || !extId.includes('.') || prop.value?.type !== 'ObjectExpression') return false;
+    if (!extId || (!extId.includes('.') && !targetIds.includes(extId)) || prop.value?.type !== 'ObjectExpression') return false;
     const distProp = findObjectProperty(prop.value, key => key === 'dist');
     return Boolean(distProp && hasAnySha256Leaf(distProp.value));
   });
   return looksLikeHashMap ? node : null;
 }
 
+function mapContainsAnyTarget(mapNode, targetIds) {
+  if (targetIds.length === 0) return true;
+  return targetIds.some(id => Boolean(findExtensionEntryInMap(mapNode, id)));
+}
+
 /**
  * 定位 extensionHostProcess.js 中的内置扩展完整性哈希表（不依赖混淆变量名）。
  *
  * 1. 优先从 `checking expected hashes for` 日志使用点反推变量名（如 n3 / s3），
- *    再向上查找该变量的 `={...}` 对象字面量并通过 acorn 校验 AST 结构；
+ *    收集所有满足哈希表结构的候选对象，优先选择包含目标扩展（如 cursor-always-local）的唯一表，
+ *    避免被同名的局部阴影变量误命中；
  * 2. 回退直接按 `"anysphere.cursor-always-local":{dist:{` 等条目结构反找外层对象。
  */
-export function locateVerifiedHashMap(source) {
+export function locateVerifiedHashMap(source, targetIds = []) {
+  const byStart = new Map();
+  const addCandidate = (node, priority) => {
+    if (!node) return;
+    const prev = byStart.get(node.start);
+    if (!prev || priority < prev.priority) byStart.set(node.start, { node, priority });
+  };
+
   const usageAt = source.indexOf(VERIFY_USAGE_NEEDLE);
   if (usageAt >= 0) {
     const before = source.slice(Math.max(0, usageAt - 300), usageAt);
@@ -92,46 +106,71 @@ export function locateVerifiedHashMap(source) {
         if (aBefore !== bBefore) return aBefore - bBefore;
         return Math.abs(usageAt - a) - Math.abs(usageAt - b);
       });
-      for (const braceAt of candidates) {
-        const parsed = parseVerifiedHashMapAt(source, braceAt);
-        if (parsed) return parsed;
+      for (let idx = 0; idx < candidates.length; idx++) {
+        const parsed = parseVerifiedHashMapAt(source, candidates[idx], targetIds);
+        if (parsed) addCandidate(parsed, idx);
       }
     }
   }
 
   // 结构回退：直接寻找带 dist 的内置扩展条目，再反查其外层 `={` 对象起点
-  const entryRe = /["'][^"']+\.(?:cursor-always-local|[a-z0-9-]+)["']\s*:\s*\{\s*["']?dist["']?\s*:\s*\{/gi;
-  const entryOffsets = [];
-  for (const match of source.matchAll(entryRe)) {
-    const isAlwaysLocal = match[0].includes('cursor-always-local');
-    entryOffsets.push({ offset: match.index, priority: isAlwaysLocal ? 0 : 1 });
-    if (entryOffsets.length >= 20) break;
-  }
-  entryOffsets.sort((a, b) => a.priority - b.priority);
-
-  const tried = new Set();
-  for (const { offset } of entryOffsets) {
-    const windowStart = Math.max(0, offset - 32768);
-    const slice = source.slice(windowStart, offset);
-    const openRe = /=\s*\{/g;
-    const opens = [];
-    for (const m of slice.matchAll(openRe)) {
-      opens.push(windowStart + m.index + m[0].length - 1);
+  const hasTargetedMatch = [...byStart.values()].some(({ node }) => mapContainsAnyTarget(node, targetIds));
+  if (!hasTargetedMatch) {
+    const entryRe = /(["'])([\w.-]+)\1\s*:\s*\{/g;
+    const entryOffsets = [];
+    for (const match of source.matchAll(entryRe)) {
+      const key = match[2];
+      if (targetIds.length ? !targetIds.some(id => matchesExtensionId(key, id)) : !key.includes('.')) continue;
+      entryOffsets.push({ offset: match.index, key });
     }
-    for (let i = opens.length - 1; i >= 0; i--) {
-      const braceAt = opens[i];
-      if (tried.has(braceAt)) continue;
-      tried.add(braceAt);
-      const parsed = parseVerifiedHashMapAt(source, braceAt);
-      if (parsed && parsed.start <= offset && offset < parsed.end) return parsed;
+
+    const parsedByStart = new Map();
+    for (const { offset, key } of entryOffsets) {
+      const windowStart = Math.max(0, offset - 32768);
+      const slice = source.slice(windowStart, offset);
+      const openRe = /=\s*\{/g;
+      const opens = [];
+      for (const m of slice.matchAll(openRe)) {
+        opens.push(windowStart + m.index + m[0].length - 1);
+      }
+      for (let i = opens.length - 1; i >= 0; i--) {
+        const braceAt = opens[i];
+        if (!parsedByStart.has(braceAt)) parsedByStart.set(braceAt, parseVerifiedHashMapAt(source, braceAt, targetIds));
+        const parsed = parsedByStart.get(braceAt);
+        const entry = parsed && findObjectProperty(parsed, name => name === key);
+        if (entry?.start === offset) {
+          addCandidate(parsed, 1000);
+          break;
+        }
+      }
     }
   }
 
-  return null;
+  const allCandidates = [...byStart.values()].sort((a, b) => a.priority - b.priority).map(item => item.node);
+  if (allCandidates.length === 0) return null;
+
+  if (targetIds.length > 0) {
+    const matched = allCandidates.filter(node => mapContainsAnyTarget(node, targetIds));
+    if (matched.length === 1) return matched[0];
+    if (matched.length > 1) {
+      throw new Error(`Ambiguous built-in extension verification hash map in extensionHostProcess.js (${matched.length} candidates match targets)`);
+    }
+  }
+  return allCandidates[0];
 }
 
 function findExtensionEntryInMap(mapNode, extId) {
-  return findObjectProperty(mapNode, key => key === extId || key.endsWith(`.${extId}`));
+  return findObjectProperty(mapNode, key => matchesExtensionId(key, extId));
+}
+
+function matchesExtensionId(key, id) {
+  return key === id || key.endsWith(`.${id}`);
+}
+
+function missingHashTarget(mapNode, targetIds) {
+  const alwaysLocal = targetIds.find(id => id === 'cursor-always-local');
+  if (alwaysLocal && !findExtensionEntryInMap(mapNode, alwaysLocal)) return alwaysLocal;
+  return mapContainsAnyTarget(mapNode, targetIds) ? null : targetIds.join(', ');
 }
 
 function findDistHashLeaf(extEntryNode, relPath) {
@@ -145,7 +184,7 @@ function findDistHashLeaf(extEntryNode, relPath) {
   if (!current || current.type !== 'Literal' || typeof current.value !== 'string' || !SHA256_HEX_RE.test(current.value)) {
     return null;
   }
-  return { node: current, hash: current.value };
+  return { node: current, hash: current.value.toLowerCase() };
 }
 
 function collectExtensionTargets(writes) {
@@ -175,12 +214,17 @@ export function prepareVerifiedHashUpdate(paths, writes, read) {
   if (targets.length === 0) return null;
 
   const original = read(paths.extensionHostJs);
-  const mapNode = locateVerifiedHashMap(original);
+  const targetIds = [...new Set(targets.map(t => t.id))];
+  const mapNode = locateVerifiedHashMap(original, targetIds);
   if (!mapNode) {
     if (hasVerifiedHashCheck(original)) {
       throw new Error('Built-in extension verification hash map not found in extensionHostProcess.js');
     }
     return null;
+  }
+  const missingTarget = hasVerifiedHashCheck(original) && missingHashTarget(mapNode, targetIds);
+  if (missingTarget) {
+    throw new Error(`Built-in extension verification hash map is missing target extension (${missingTarget})`);
   }
 
   const edits = [];
@@ -210,32 +254,34 @@ export function inspectVerifiedHashSync(paths) {
   if (!paths.extensionHostJs || !existsSync(paths.extensionHostJs)) {
     return { present: false, hasCheck: false, synced: true, mismatched: [], error: null };
   }
-  const source = readFileSync(paths.extensionHostJs, 'utf-8');
-  const hasCheck = hasVerifiedHashCheck(source);
-  const mapNode = locateVerifiedHashMap(source);
-  if (!mapNode) {
-    return {
-      present: true,
-      hasCheck,
-      synced: !hasCheck,
-      mismatched: [],
-      error: hasCheck ? 'verification hash map not found' : null,
-    };
-  }
-
-  const candidateFiles = [paths.alwaysLocalMain, paths.agentHostMain].filter(file => file && existsSync(file));
-  const targets = collectExtensionTargets(candidateFiles.map(file => ({ file, source: readFileSync(file, 'utf-8') })));
-  const mismatched = [];
-  for (const target of targets) {
-    const entry = findExtensionEntryInMap(mapNode, target.id);
-    if (!entry) continue;
-    const leaf = findDistHashLeaf(entry, target.rel);
-    const actualHash = createHash('sha256').update(target.source).digest('hex');
-    if (!leaf || leaf.hash !== actualHash) {
-      mismatched.push(`${target.id}/dist/${target.rel}`);
+  try {
+    const source = readFileSync(paths.extensionHostJs, 'utf-8');
+    const hasCheck = hasVerifiedHashCheck(source);
+    const agentHostTargets = paths.agentHostMain || paths.agentHostDist ? getAgentHostBackupTargets(paths) : [];
+    const candidateFiles = [paths.alwaysLocalMain, ...agentHostTargets]
+      .filter(file => file && existsSync(file));
+    const targets = collectExtensionTargets(candidateFiles.map(file => ({ file, source: readFileSync(file) })));
+    const targetIds = [...new Set(targets.map(t => t.id))];
+    const mapNode = locateVerifiedHashMap(source, targetIds);
+    if (!mapNode) {
+      return { present: true, hasCheck, synced: !hasCheck, mismatched: [], error: hasCheck ? 'verification hash map not found' : null };
     }
+    const missingTarget = hasCheck && missingHashTarget(mapNode, targetIds);
+    if (missingTarget) throw new Error(`Verification hash map is missing target extension (${missingTarget})`);
+
+    const mismatched = [];
+    for (const target of targets) {
+      const entry = findExtensionEntryInMap(mapNode, target.id);
+      if (!entry) continue;
+      const leaf = findDistHashLeaf(entry, target.rel);
+      const actualHash = createHash('sha256').update(target.source).digest('hex');
+      if (!leaf || leaf.hash !== actualHash) mismatched.push(`${target.id}/dist/${target.rel}`);
+    }
+    return { present: true, hasCheck: true, synced: mismatched.length === 0, mismatched, error: null };
   }
-  return { present: true, hasCheck: true, synced: mismatched.length === 0, mismatched, error: null };
+  catch (error) {
+    return { present: true, hasCheck: true, synced: false, mismatched: [], error: error.message };
+  }
 }
 
 function prepareRoutingPatches(paths) {
@@ -275,14 +321,23 @@ function prepareRoutingPatches(paths) {
   addGroup('inject', workbenches.map(({ path, label }) =>
     [path, prepareWorkbenchPatch(read(path), label, paths, undefined, { routingOnly: true })]));
 
-  const legacySource = read(paths.alwaysLocalMain);
-  addGroup('always-local', [[paths.alwaysLocalMain, prepareAlwaysLocalRoutingPatch(legacySource)]]);
+  const legacySource = prepareAlwaysLocalRoutingPatch(read(paths.alwaysLocalMain));
+  const agentHostPlan = hasAgentHost(paths) ? prepareAgentHostPatch(paths) : null;
+  for (const [file, source] of agentHostPlan?.originalByFile ?? []) originals.set(file, source);
+  const agentHostTargets = getAgentHostBackupTargets(paths);
 
-  if (hasAgentHost(paths)) {
-    const { originalByFile, patchedByFile } = prepareAgentHostPatch(paths);
-    for (const [file, source] of originalByFile) originals.set(file, source);
-    addGroup('agent-host', patchedByFile);
+  // Include already patched bundles and chunks when only the hash table needs an update.
+  const verifySources = new Map(agentHostPlan?.patchedByFile);
+  verifySources.set(paths.alwaysLocalMain, legacySource);
+  for (const file of agentHostTargets) {
+    if (existsSync(file) && !verifySources.has(file)) verifySources.set(file, readFileSync(file));
   }
+  const verifiedBundles = prepareVerifiedHashUpdate(paths, [...verifySources].map(([file, source]) => ({ file, source })), read);
+  const alwaysLocalWrites = [[paths.alwaysLocalMain, legacySource]];
+  if (verifiedBundles !== null) alwaysLocalWrites.push([paths.extensionHostJs, verifiedBundles]);
+  addGroup('always-local', alwaysLocalWrites);
+
+  if (agentHostPlan) addGroup('agent-host', agentHostPlan.patchedByFile);
 
   const singleton = getProxy39Target(paths);
   if (needsProxy39Patch(paths)) {
@@ -295,39 +350,29 @@ function prepareRoutingPatches(paths) {
     [path, prepareAgentHostGatePatch(current(path), label).source]));
 
 
-  const backupTargets = new Set([
-    ...originals.keys(), paths.glassJs, paths.extensionHostJs, singleton, ...getAgentHostBackupTargets(paths),
-  ]);
-
-  // 内置扩展完整性校验：把我们改过的内置扩展文件的期望哈希同步进哈希表，
-  // 否则 cursor-always-local 会被判定 Hash mismatch 而拒绝激活。
-  // 已打过补丁但本次无需再写的文件也要算进来（增量场景下 writes 里没有它）。
-  const verifySources = new Map(writes.map(({ file, source }) => [file, source]));
-  for (const file of [paths.alwaysLocalMain, paths.agentHostMain]) {
-    if (file && existsSync(file) && !verifySources.has(file)) verifySources.set(file, readFileSync(file, 'utf-8'));
-  }
-  const verifiedBundles = prepareVerifiedHashUpdate(paths, [...verifySources].map(([file, source]) => ({ file, source })), read);
-  if (verifiedBundles) addGroup('inject', [[paths.extensionHostJs, verifiedBundles]]);
-  // 已有备份只在「本次要写新内容、且当前文件不是我们打的补丁」时才不可信：
-  // 那说明备份和本机的补丁序列对不上。已带本项目补丁标记的文件属于增量更新
-  // （例如给已安装的机器补一条新子补丁），旧备份仍是干净的原始件，可以复用。
+  const backupTargets = new Set([...originals.keys(), paths.glassJs, paths.extensionHostJs, singleton, ...agentHostTargets]);
   const OWN_MARKERS = [
     'CURSOR-BYOK-HOOK-START',
     'byokAgentHostUrlRewrite',
     '__byokUrlRewrite',
     '__byokSingletonUrlRewrite',
+    '__byokTurnRouteGuard',
+    '__byokAgentWebSocketGateDisabled',
+    '__byokAgentHostWebSocketGateDisabled',
+    'BYOK-HTTP1-GUARD',
+    'BYOK-HTTP1-REBUILD',
     'BYOK-HTTP11-ROUTER-',
     'BYOK-AGENT-HOST-GATE-OFF',
   ];
-  const patchedByUs = file => OWN_MARKERS.some(marker => readFileSync(file, 'utf8').includes(marker));
-  // product.json（校验和宿主）与 extensionHostProcess.js（内置扩展哈希表宿主）本身不带补丁
-  // 标记，判断「补丁覆盖补丁」时排除它们；只剩这两个文件的写入也算增量更新。
+  const patchedByUs = file => {
+    const source = originals.get(file) ?? (existsSync(file) ? readFileSync(file, 'utf8') : '');
+    return OWN_MARKERS.some(marker => source.includes(marker));
+  };
   const metaFiles = new Set([paths.productJson, paths.extensionHostJs]);
-  const patchWrites = writes.filter(({ file }) => !metaFiles.has(file));
-  const updatingPatchedTree = writes.length > 0 && patchWrites.every(({ file }) => patchedByUs(file));
-  for (const file of backupTargets) {
-    if (!hasBackup(file)) continue;
-    if (updatingPatchedTree) continue;
+  const existingBackups = new Set([...backupTargets].filter(file => hasBackup(file)));
+  const updatingPatchedTree = existingBackups.size > 0 && [...backupTargets].some(file => !metaFiles.has(file) && patchedByUs(file));
+  for (const file of existingBackups) {
+    if (updatingPatchedTree && (metaFiles.has(file) || !planned.has(file) || patchedByUs(file))) continue;
     if (writes.length === 0 && originals.has(file)) continue;
     throw new Error(`Existing backup for ${file} prevents safe application. Start from a clean copy of this Cursor build.`);
   }
@@ -339,7 +384,7 @@ function prepareRoutingPatches(paths) {
     const mismatch = Object.keys(expected).find(key => expected[key] !== product.checksums[key]);
     if (mismatch) throw new Error(`Checksum mismatch for ${mismatch}. Start from a clean copy of this Cursor build.`);
   }
-  return { originals, writes, targets: [...planned.keys()], reuseBackups: updatingPatchedTree };
+  return { originals, writes, targets: [...planned.keys()], existingBackups };
 }
 
 function preflight() {
@@ -359,29 +404,49 @@ export async function checkRouting() {
 }
 
 export async function inject() {
-  const { originals, writes, targets, reuseBackups } = preflight();
+  const { originals, writes, targets, existingBackups } = preflight();
+  const snapshots = new Map();
+  const reusableBackups = new Set();
   for (const file of targets) {
-    if (readFileSync(file, 'utf-8') !== originals.get(file) || (hasBackup(file) && !reuseBackups)) {
+    const snapshot = readFileSync(file);
+    if (snapshot.toString('utf8') !== originals.get(file) || hasBackup(file) !== existingBackups.has(file)) {
       throw new Error(`File or backups changed during preflight: ${file}`);
     }
+    snapshots.set(file, snapshot);
+    if (existingBackups.has(file) && UNINSTALL_TAGS.some(tag => hasBackup(file, tag))) reusableBackups.add(file);
     accessSync(file, constants.W_OK);
     accessSync(dirname(file), constants.W_OK);
   }
 
-  const backedUp = [];
+  const writtenFiles = new Set();
+  const createdBackups = [];
   try {
     for (const { file, source, tag } of writes) {
-      createBackup(file, tag, info);
-      backedUp.push({ file, tag });
+      // A new tag could restore a later snapshot over the original during uninstall.
+      if (!reusableBackups.has(file)) {
+        createBackup(file, tag, info, path => createdBackups.push({ file, path }));
+      }
+      writtenFiles.add(file);
       writeFileSync(file, source);
     }
   } catch (error) {
+    // 仅回滚本次运行写入的文件到运行前快照，并清理本次新建的备份，
+    // 不消耗先前已存在的卸载用原始备份，避免增量注入中途失败留下混合版本。
     const failed = [];
-    for (const { file, tag } of backedUp.reverse()) {
+    for (const file of [...writtenFiles].reverse()) {
       try {
-        if (!restoreBackup(file, tag, info)) failed.push(file);
+        writeFileSync(file, snapshots.get(file));
+        writtenFiles.delete(file);
       } catch (restoreError) {
-        failed.push(restoreError.message);
+        failed.push(`${file}: ${restoreError.message}`);
+      }
+    }
+    for (const { file, path } of createdBackups.reverse()) {
+      if (writtenFiles.has(file)) continue;
+      try {
+        if (existsSync(path)) unlinkSync(path);
+      } catch (cleanupError) {
+        failed.push(cleanupError.message);
       }
     }
     const rollback = failed.length ? ` Rollback failed for ${failed.join(', ')}.` : '';

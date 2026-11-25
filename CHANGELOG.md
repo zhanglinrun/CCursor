@@ -8,6 +8,16 @@ fork 基准为上游 `0.0.15`。README 只负责「这是什么 / 怎么装 / �
 
 ---
 
+## 0.1.11 — 修复多处 `nal_websocket_client` 字面量导致注入失败并全面加固路由注入管线
+
+- 修复部分 Cursor 构建中 `cursor-always-local/dist/main.js` 含多处 `nal_websocket_client` 字面量导致注入报错（`expected one nal_websocket_client gate literal, found 2`）的问题：
+  - `agent-websocket-guard.js` 放宽为匹配 `>= 1` 处 gate 字面量（含无插值模板字面量）与 `>= 1` 组 accepted-origin 数组，统一禁用全部匹配点（0 处时继续严格 fail-closed）；跳过对象属性键与 tagged template，并校验编辑区间互不重叠。
+- 全面加固路由注入、回滚与跨版本兼容性：
+  - `inject.js` / `backup.js`：中途写入失败改为按运行前字节快照回滚且仅清理本次新建备份，避免增量注入失败消耗既有卸载备份留下混合版本；已存在卸载备份的文件复用原始备份且 `extensionHostProcess.js` 与 `always-local` 同组，修复 `install → inject → uninstall` 还原覆盖风险。
+  - `inject.js`：哈希表定位过滤局部阴影同名变量、检测多表歧义并纳入 Agent Host 懒加载 chunk 校验。
+  - `agent-host-topology.js` / `patch-agent-host-gate.js`：共用基于 `[CursorAgentHostEnablementService]` 锚点的赋值定位，保留括号避免 `=(a||b),log()` 截断语法错误。
+  - `agent-http1-guard.js` / `agent-turn-route-guard.js`：兼容单/双引号与空白变化；`cursor-routing.ts` 改为 AST 精确校验 `cursor-always-local/dist/main.js` 哈希叶子。
+
 ## 0.1.10 — 修复 Cursor 3.31.15+ 注入后模型不显示（扩展哈希表语义定位与拓扑门闩适配）
 
 - 修复 Cursor 3.31.15+ 路由注入后模型列表不显示 BYOK 模型的问题：

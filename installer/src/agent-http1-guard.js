@@ -24,19 +24,17 @@ export const HTTP1_GUARD_MARKER = '/*BYOK-HTTP1-GUARD*/';
 export const HTTP1_REBUILD_MARKER = '/*BYOK-HTTP1-REBUILD*/';
 
 const ROUTED_PATH = '/agent.v1.AgentService/RunSSE';
-const IS_HTTP2_ANCHOR = 'isHttp2Disabled(){return this.httpProtocolFallback.isDisabled("http2")';
-const IS_HTTP2_HEAD = 'isHttp2Disabled(){';
-const REBUILD_ANCHOR = 'this.disposables.push(this.host.onDidChangeHttpProtocolSettings(';
+const IS_HTTP2_RE = /isHttp2Disabled\s*\(\s*\)\s*\{\s*return[^\S\r\n\u2028\u2029]+this\.httpProtocolFallback\.isDisabled\s*\(\s*(['"])http2\1\s*\)/;
+const REBUILD_RE = /this\.disposables\.push\s*\(\s*this\.host\.onDidChangeHttpProtocolSettings\s*\(/;
 
 export function hasHttp1GuardAnchor(source) {
-  return typeof source === 'string' && source.includes(IS_HTTP2_ANCHOR);
+  return typeof source === 'string' && IS_HTTP2_RE.test(source);
 }
 
 export function isHttp1GuardPatched(source) {
   if (typeof source !== 'string') return false;
-  if (!hasHttp1GuardAnchor(source)) return true;
-  if (!source.includes(HTTP1_GUARD_MARKER)) return false;
-  if (source.includes(REBUILD_ANCHOR) && !source.includes(HTTP1_REBUILD_MARKER)) return false;
+  if (hasHttp1GuardAnchor(source) && !source.includes(HTTP1_GUARD_MARKER)) return false;
+  if (REBUILD_RE.test(source) && !source.includes(HTTP1_REBUILD_MARKER)) return false;
   return true;
 }
 
@@ -51,16 +49,18 @@ export function guardAgentHttp1(source) {
   let out = source;
   let changed = false;
 
-  if (out.includes(IS_HTTP2_ANCHOR) && !out.includes(HTTP1_GUARD_MARKER)) {
-    const idx = out.indexOf(IS_HTTP2_ANCHOR);
-    const insertAt = idx + IS_HTTP2_HEAD.length;
+  const http2Match = !out.includes(HTTP1_GUARD_MARKER) ? IS_HTTP2_RE.exec(out) : null;
+  if (http2Match) {
+    const braceOffset = http2Match[0].indexOf('{');
+    const insertAt = http2Match.index + braceOffset + 1;
     const guard = `${HTTP1_GUARD_MARKER}if(globalThis.__byokRpcRouted&&globalThis.__byokRpcRouted(${JSON.stringify(ROUTED_PATH)}))return!0;`;
     out = out.slice(0, insertAt) + guard + out.slice(insertAt);
     changed = true;
   }
 
-  if (out.includes(REBUILD_ANCHOR) && !out.includes(HTTP1_REBUILD_MARKER)) {
-    const idx = out.indexOf(REBUILD_ANCHOR);
+  const rebuildMatch = !out.includes(HTTP1_REBUILD_MARKER) ? REBUILD_RE.exec(out) : null;
+  if (rebuildMatch) {
+    const idx = rebuildMatch.index;
     const hook = `${HTTP1_REBUILD_MARKER}globalThis.__byokOnRouteChange&&this.disposables.push({dispose:globalThis.__byokOnRouteChange((()=>{this.cursorCreds&&this.setup("protocol_settings").catch((()=>{}))}))}),`;
     out = out.slice(0, idx) + hook + out.slice(idx);
     changed = true;

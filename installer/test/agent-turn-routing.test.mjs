@@ -16,10 +16,13 @@ const GUARD_TEST = 'globalThis.__byokRpcRouted&&globalThis.__byokRpcRouted("/age
 for (const route of [
   '{runtime:"managed-local",reason:"eligible"}',
   '{ reason: "eligible", runtime: "managed-local" }',
+  "{ 'runtime': 'managed-local', 'reason': 'eligible' }",
 ]) {
   test(`eligible turn is wrapped in a conditional guard: ${route}`, () => {
     const source = `const log=${JSON.stringify(FINGERPRINT)};function route(){return ${route}}`;
     assert.equal(hasTurnRouter(source), true);
+    assert.equal(isTurnRouteGuarded(source), false);
+    assert.deepEqual(assertTurnRouteShape([{ file: 'main.js', source }]), { required: true });
     const result = guardTurnRoute(source, 'test.js');
     assert.equal(result.changed, 1);
     acorn.parse(result.source, { ecmaVersion: 'latest' });

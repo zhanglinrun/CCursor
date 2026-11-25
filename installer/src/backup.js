@@ -15,10 +15,11 @@
  *     1. restore tag=always-local → product.json 回到"仅 inject"状态
  *     2. restore tag=inject       → product.json 回到完全原始状态
  */
-import { copyFileSync, existsSync, readdirSync, renameSync, unlinkSync } from 'fs';
+import { constants, copyFileSync, existsSync, readdirSync, renameSync, unlinkSync } from 'fs';
 import { basename, dirname, join } from 'path';
 
 const PREFIX = 'backup-byok';
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;
 
 function backupNamePattern(base, tag) {
   // 匹配 <base>.backup-byok-<tag>-<ts>
@@ -28,10 +29,10 @@ function backupNamePattern(base, tag) {
 function listBackups(dir, base, tag) {
   if (!existsSync(dir)) return [];
   const prefix = backupNamePattern(base, tag);
-  return readdirSync(dir).filter(f => f.startsWith(prefix)).sort();
+  return readdirSync(dir).filter(f => f.startsWith(prefix) && TIMESTAMP.test(f.slice(prefix.length))).sort();
 }
 
-export function createBackup(filePath, tag, log) {
+export function createBackup(filePath, tag, log, onCreated) {
   const dir = dirname(filePath);
   const base = basename(filePath);
   const existing = listBackups(dir, base, tag);
@@ -42,7 +43,14 @@ export function createBackup(filePath, tag, log) {
 
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const backupPath = `${filePath}.${PREFIX}-${tag}-${ts}`;
-  copyFileSync(filePath, backupPath);
+  try {
+    copyFileSync(filePath, backupPath, constants.COPYFILE_EXCL);
+  }
+  catch (error) {
+    if (error.code === 'EEXIST') return backupPath;
+    throw error;
+  }
+  onCreated?.(backupPath);
   log?.(`  Backup [${tag}]: ${basename(backupPath)}`);
   return backupPath;
 }

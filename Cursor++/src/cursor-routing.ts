@@ -1,6 +1,8 @@
+import type { Expression } from 'acorn'
 import { createHash } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readSync } from 'node:fs'
 import { join } from 'node:path'
+import { parseExpressionAt } from 'acorn'
 
 function containsMarker(file: string, marker: string): boolean {
   try {
@@ -22,24 +24,47 @@ function containsMarker(file: string, marker: string): boolean {
 /**
  * 检查 extensionHostProcess.js 里的内置扩展哈希表是否已同步 cursor-always-local/dist/main.js 的 sha256。
  *
- * 找不到 extensionHostProcess.js 或该版本没有内置扩展哈希表条目时视为兼容（返回 true）；
- * 存在条目却不含当前 sha256 时返回 false，触发面板提醒用户重新注入。
+ * 旧版本没有哈希校验时仍兼容。启用校验时，条目必须可读且与磁盘文件一致。
  */
 function hasSyncedAlwaysLocalHash(appRoot: string, agentMainPath: string): boolean {
   const extensionHostJs = join(appRoot, 'out', 'vs', 'workbench', 'api', 'node', 'extensionHostProcess.js')
-  if (!existsSync(extensionHostJs))
-    return true
+  let hostSource: string
   try {
-    const hostSource = readFileSync(extensionHostJs, 'utf8')
-    const hasEntry = /["'][^"']*cursor-always-local["']\s*:\s*\{\s*["']?dist["']?\s*:\s*\{/.test(hostSource)
-    if (!hasEntry)
-      return true
-    const actualHash = createHash('sha256').update(readFileSync(agentMainPath, 'utf8')).digest('hex')
-    return hostSource.includes(actualHash)
+    hostSource = readFileSync(extensionHostJs, 'utf8')
+  }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+  try {
+    const entryMatch = /(['"])(?:[^'"\r\n]+\.)?cursor-always-local\1\s*:\s*\{/.exec(hostSource)
+    if (!entryMatch) {
+      const enforcesHash = hostSource.includes('checking expected hashes for') || hostSource.includes('Hash mismatch for files:')
+      return !enforcesHash
+    }
+    const entry = parseExpressionAt(hostSource, entryMatch.index + entryMatch[0].length - 1, { ecmaVersion: 'latest' })
+    const mainHash = objectProperty(objectProperty(entry, 'dist'), 'main.js')
+    if (mainHash?.type !== 'Literal' || typeof mainHash.value !== 'string')
+      return false
+    const actualHash = createHash('sha256').update(readFileSync(agentMainPath)).digest('hex')
+    return mainHash.value.toLowerCase() === actualHash
   }
   catch {
-    return true
+    return false
   }
+}
+
+function objectProperty(node: Expression | undefined, name: string): Expression | undefined {
+  if (node?.type !== 'ObjectExpression')
+    return undefined
+  for (let index = node.properties.length - 1; index >= 0; index--) {
+    const property = node.properties[index]
+    if (property.type !== 'Property' || property.computed)
+      continue
+    const key = property.key
+    if ((key.type === 'Identifier' && key.name === name) || (key.type === 'Literal' && key.value === name))
+      return property.value
+  }
+  return undefined
 }
 
 export function hasCursorRoutingPatch(appRoot: string): boolean {

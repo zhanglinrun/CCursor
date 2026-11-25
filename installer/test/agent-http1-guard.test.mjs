@@ -93,3 +93,30 @@ test('guardAgentHttp1 leaves bundles without anchor untouched', () => {
   assert.equal(res.changed, false);
   assert.equal(res.source, plain);
 });
+
+test('guardAgentHttp1 handles single quotes and whitespace around both anchors', () => {
+  const source = SAMPLE_BUNDLE
+    .replace('isHttp2Disabled(){return', 'isHttp2Disabled (\n ) {\n  return ')
+    .replace('isDisabled("http2")', "isDisabled (\n 'http2' )")
+    .replace('push(this.host.onDidChangeHttpProtocolSettings(', 'push (\n this.host.onDidChangeHttpProtocolSettings (');
+  assert.equal(hasHttp1GuardAnchor(source), true);
+  assert.equal(isHttp1GuardPatched(source), false);
+  const result = guardAgentHttp1(source);
+  assert.ok(result.source.includes(HTTP1_GUARD_MARKER));
+  assert.ok(result.source.includes(HTTP1_REBUILD_MARKER));
+  assert.equal(isHttp1GuardPatched(result.source), true);
+  assert.doesNotThrow(() => new vm.Script(result.source));
+});
+
+test('guardAgentHttp1 completes a partial guard that is missing its rebuild hook', () => {
+  const partial = SAMPLE_BUNDLE.replace('isHttp2Disabled(){return', `isHttp2Disabled(){${HTTP1_GUARD_MARKER}if(globalThis.__byokRpcRouted?.('/agent.v1.AgentService/RunSSE'))return true;return`);
+  assert.equal(hasHttp1GuardAnchor(partial), false);
+  assert.equal(isHttp1GuardPatched(partial), false);
+
+  const result = guardAgentHttp1(partial);
+  assert.equal(result.changed, true);
+  assert.equal(result.source.split(HTTP1_GUARD_MARKER).length, 2);
+  assert.ok(result.source.includes(HTTP1_REBUILD_MARKER));
+  assert.equal(isHttp1GuardPatched(result.source), true);
+  assert.equal(guardAgentHttp1(result.source).changed, false);
+});

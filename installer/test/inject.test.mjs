@@ -33,11 +33,11 @@ const hostSource = 'async function verify(pkg){if (!(await signedByPublisher(pkg
 
 const hash = source => createHash('sha256').update(source).digest('base64').replace(/=+$/, '');
 
-function snapshot(dir) {
+function snapshot(dir, encoding = 'utf-8') {
   const files = readdirSync(dir, { recursive: true, withFileTypes: true });
   return new Map(files.filter(entry => entry.isFile()).map(entry => {
     const path = join(entry.parentPath, entry.name);
-    return [path, readFileSync(path, 'utf-8')];
+    return [path, readFileSync(path, encoding)];
   }));
 }
 
@@ -80,7 +80,10 @@ function turn(){return {runtime:"managed-local",reason:"eligible"}}
   write(home, '.cursor/extensions/cursor2plus/package.json', '{"name":"cursor2plus"}');
 
   function run(...args) {
-    const result = spawnSync(process.execPath, [cli, ...args], {
+    return runWithNodeArgs([], ...args);
+  }
+  function runWithNodeArgs(nodeArgs, ...args) {
+    const result = spawnSync(process.execPath, [...nodeArgs, cli, ...args], {
       cwd: temp,
       env: { ...process.env, CCURSOR_CURSOR_ROOT: root, HOME: home, USERPROFILE: home },
       encoding: 'utf8', timeout: 10000,
@@ -88,7 +91,7 @@ function turn(){return {runtime:"managed-local",reason:"eligible"}}
     assert.equal(result.error, undefined);
     return { status: result.status, output: result.stdout + result.stderr };
   }
-  return { root, home, readApp, writeApp, run };
+  return { root, home, readApp, writeApp, run, runWithNodeArgs };
 }
 
 test('routing preflight accepts an unknown signature check and inject changes only routing files', (t) => {
@@ -183,6 +186,9 @@ test('syncs built-in extension verification hash map regardless of minified var 
   ].join('\n');
   writeApp(extensionHost, hostWithS3Map);
   const product = JSON.parse(readApp('product.json'));
+  // Exercise uninstall with no renderer checksum backup to mask a wrong restore order.
+  delete product.checksums[desktop.slice('out/'.length)];
+  delete product.checksums[glass.slice('out/'.length)];
   product.checksums[extensionHost.slice('out/'.length)] = hash(hostWithS3Map);
   writeApp('product.json', JSON.stringify(product));
   const appBefore = snapshot(root);
@@ -225,6 +231,9 @@ test('fails loudly when extensionHostProcess enforces hashes but verification ma
     assert.match(res.output, /verification hash map not found/i);
     assert.deepEqual(snapshot(root), before);
   }
+  const status = run('status');
+  assert.equal(status.status, 0, status.output);
+  assert.match(status.output, /Built-in extension hash table unreadable \(verification hash map not found\)/);
 });
 
 test('in-place upgrades a pre-patched Cursor 3.31 tree (_topologyEnabled + stale s3 hash)', (t) => {
@@ -268,4 +277,114 @@ test('in-place upgrades a pre-patched Cursor 3.31 tree (_topologyEnabled + stale
     assert.match(readApp(file), /this\._topologyEnabled=false\/\*BYOK-AGENT-HOST-GATE-OFF\*\//);
   }
   assert.ok(readApp(extensionHost).includes(patchedLegacyHash));
+});
+
+test('a failed incremental write restores pre-run files and preserves existing uninstall backups', (t) => {
+  const { root, home, readApp, writeApp, run, runWithNodeArgs } = fixture(t);
+  const originalHash = createHash('sha256').update(readApp(legacy)).digest('hex');
+  const first = run('inject');
+  assert.equal(first.status, 0, first.output);
+
+  writeApp(extensionHost, `const map={'cursor-always-local':{dist:{'main.js':'${originalHash}'}}};`);
+  for (const file of [desktop, glass]) {
+    writeApp(file, readApp(file).replace('false/*BYOK-AGENT-HOST-GATE-OFF*/', 'a||b'));
+  }
+  const product = JSON.parse(readApp('product.json'));
+  for (const file of [desktop, glass, extensionHost]) {
+    product.checksums[file.slice('out/'.length)] = hash(readApp(file));
+  }
+  writeApp('product.json', JSON.stringify(product));
+
+  const appBefore = snapshot(root, null);
+  const preflight = run('check', '--routing-only');
+  assert.equal(preflight.status, 0, preflight.output);
+  assert.match(preflight.output, /4 file\(s\) would change/);
+  assert.deepEqual(snapshot(root, null), appBefore);
+
+  const preload = join(home, 'fail-write.cjs');
+  writeFileSync(preload, `
+    const fs = require('node:fs');
+    const write = fs.writeFileSync;
+    const failedFile = ${JSON.stringify(join(root, glass))};
+    let failed = false;
+    fs.writeFileSync = (file, source, ...options) => {
+      if (file === failedFile && !failed) {
+        failed = true;
+        write(file, source.slice(0, 50), ...options);
+        throw new Error('fixture write failed after truncating glass');
+      }
+      return write(file, source, ...options);
+    };
+    require('node:module').syncBuiltinESMExports();
+  `);
+  const failed = runWithNodeArgs(['--require', preload], 'inject');
+  assert.equal(failed.status, 1, failed.output);
+  assert.match(failed.output, /Applying routing patches failed.*fixture write failed after truncating glass/);
+  assert.doesNotMatch(failed.output, /Rollback failed/);
+  assert.deepEqual(snapshot(root, null), appBefore);
+
+  const retry = run('inject');
+  assert.equal(retry.status, 0, retry.output);
+  assert.match(retry.output, /Routing patches applied to 4 file\(s\)/);
+  for (const [file, source] of appBefore) {
+    if (file.includes('.backup-byok-')) assert.deepEqual(readFileSync(file), source);
+  }
+});
+
+test('ignores a nearer shadowed variable of the same name and updates the real verification hash table', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const sha256 = content => createHash('sha256').update(content).digest('hex');
+  const legacyOrigHash = sha256(readApp(legacy));
+  const shadowedHost = [
+    `var s3={"anysphere.cursor-always-local":{dist:{"main.js":"${legacyOrigHash}"}}};`,
+    `function unrelated(){var s3={"other.ext":{dist:{"x.js":"${'c'.repeat(64)}"}}};return s3;}`,
+    'function check(i){if(i&&i in s3){const o=s3[i];this._logService.trace(`ExtensionService#loadModule checking expected hashes for ${i}`);return o}}',
+    'const err=`Hash mismatch for files: ${m}`;',
+  ].join('\n');
+  writeApp(extensionHost, shadowedHost);
+  const product = JSON.parse(readApp('product.json'));
+  product.checksums[extensionHost.slice('out/'.length)] = hash(shadowedHost);
+  writeApp('product.json', JSON.stringify(product));
+  const appBefore = snapshot(root);
+
+  const applied = run('inject');
+  assert.equal(applied.status, 0, applied.output);
+  const patchedLegacyHash = sha256(readApp(legacy));
+  assert.ok(readApp(extensionHost).includes(`"anysphere.cursor-always-local":{dist:{"main.js":"${patchedLegacyHash}"}}`));
+
+  const removed = run('uninstall');
+  assert.equal(removed.status, 0, removed.output);
+  assert.deepEqual(snapshot(root), appBefore);
+});
+
+test('legacy always-local backup on extensionHostProcess.js followed by inject restores clean original on uninstall', (t) => {
+  const { root, readApp, writeApp, run } = fixture(t);
+  const sha256 = content => createHash('sha256').update(content).digest('hex');
+  const legacyOrigHash = sha256(readApp(legacy));
+  const stockHost = `function check(i){if(i&&i in s3){const o=s3[i];this._logService.trace(\`ExtensionService#loadModule checking expected hashes for \${i}\`);return o}}var s3={"anysphere.cursor-always-local":{dist:{"main.js":"${legacyOrigHash}"}}};if(!r.valid)throw Error("sig");`;
+  const sigBypassedHost = stockHost.replace('if(!r.valid)', 'if(!1)');
+
+  // Simulate legacy install having already patched extensionHostProcess.js under always-local tag
+  writeApp(extensionHost, stockHost);
+  const prod = JSON.parse(readApp('product.json'));
+  prod.checksums[extensionHost.slice('out/'.length)] = hash(stockHost);
+  writeApp('product.json', JSON.stringify(prod));
+
+  const first = run('inject');
+  assert.equal(first.status, 0, first.output);
+
+  // Now simulate legacy sig-bypass + always-local backup holding stockHost, while disk has sigBypassedHost with old hash
+  writeApp(extensionHost, sigBypassedHost);
+  const prod2 = JSON.parse(readApp('product.json'));
+  prod2.checksums[extensionHost.slice('out/'.length)] = hash(sigBypassedHost);
+  writeApp('product.json', JSON.stringify(prod2));
+
+  const upgraded = run('inject');
+  assert.equal(upgraded.status, 0, upgraded.output);
+  const patchedLegacyHash = sha256(readApp(legacy));
+  assert.ok(readApp(extensionHost).includes(patchedLegacyHash));
+
+  const removed = run('uninstall');
+  assert.equal(removed.status, 0, removed.output);
+  assert.equal(readApp(extensionHost), stockHost, 'uninstall must restore the original stock extensionHostProcess.js');
 });

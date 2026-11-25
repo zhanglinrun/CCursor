@@ -24,6 +24,7 @@ import {
   needsAgentHostGatePatch,
   patchAgentHostGate,
 } from '../src/patch-agent-host-gate.js';
+import { guardAgentHostTopology, TOPOLOGY_MARKER } from '../src/agent-host-topology.js';
 
 /** 模拟 3.23.12 压缩产物中的 enablement service 片段 */
 const FIXTURE_WITH_ANCHOR = '/*header*/'
@@ -172,6 +173,40 @@ test('forces the gate off for Cursor 3.31+ this._topologyEnabled= and is idempot
     assert.equal(patchAgentHostGate(paths), 0);
   }
   finally { cleanup(dir); }
+});
+
+test('guardAgentHostTopology preserves parenthesized RHS without leaving a dangling paren', () => {
+  const src = 'class S{constructor(){this._topologyEnabled=(a||b),log("[CursorAgentHostEnablementService]")}}';
+  const guarded = guardAgentHostTopology(src, 'desktop');
+  assert.equal(guarded.changed, true);
+  assert.doesNotThrow(() => acorn.parse(guarded.source, { ecmaVersion: 'latest', sourceType: 'module' }));
+  assert.ok(guarded.source.includes(',log("[CursorAgentHostEnablementService]")'));
+});
+
+test('both topology patches select the enablement service when both fields appear', (t) => {
+  const unrelated = 'class Unrelated{constructor(){this._agentHostEnabled=true}}';
+  const service = 'class S{constructor(){this._topologyEnabled=(a||b),log("[CursorAgentHostEnablementService]")}}';
+  const guarded = guardAgentHostTopology(unrelated + service, 'desktop');
+  assert.equal(guarded.changed, true);
+  assert.ok(guarded.source.startsWith(unrelated));
+  assert.ok(guarded.source.includes(`this._topologyEnabled=(/*${TOPOLOGY_MARKER}*/`));
+  assert.equal(guardAgentHostTopology(guarded.source, 'desktop').changed, false);
+
+  const guardedGlass = guardAgentHostTopology(service + unrelated, 'glass');
+  assert.ok(guardedGlass.source.endsWith(unrelated));
+  assert.ok(guardedGlass.source.includes(`this._topologyEnabled=(/*${TOPOLOGY_MARKER}*/`));
+  assert.equal(guardAgentHostTopology(guardedGlass.source, 'glass').changed, false);
+
+  const { dir, paths } = makePaths(guarded.source, guardedGlass.source);
+  t.after(() => cleanup(dir));
+  assert.equal(patchAgentHostGate(paths), 2);
+  const patchedService = service.replace('(a||b)', `false${AGENT_HOST_GATE_MARKER}`);
+  for (const [file, expected] of [[paths.workbenchJs, unrelated + patchedService], [paths.glassJs, patchedService + unrelated]]) {
+    const patched = readFileSync(file, 'utf-8');
+    assert.equal(patched, expected);
+    assert.doesNotThrow(() => acorn.parse(patched, { ecmaVersion: 'latest' }));
+  }
+  assert.equal(patchAgentHostGate(paths), 0);
 });
 
 test('optional: real 3.23.12 renderer bundle', { skip: process.env.BYOK_REAL_BUNDLE !== '1' }, () => {
